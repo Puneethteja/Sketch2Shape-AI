@@ -207,3 +207,25 @@ Each entry follows the structure:
   2. **Model Offloading:** Diffusers `enable_model_cpu_offload()` to operate in < 3GB VRAM.
   3. **Lightweight Backbones:** SD-Turbo 1-step diffusion / LCM-LoRA and fast Depth-to-Mesh / Marching Cubes extrusion.
   4. **Cloud Demo Tunneling:** Zero-cost T4 GPU execution via Google Colab / Hugging Face Spaces tunneling via Gradio public share links.
+
+
+---
+
+### [2026-10-31] · Puneeth · Phase 2 · Foreground Segmentation & 3D Mesh Post-Processing Utilities
+
+**Engineer:** Puneeth — Lead Data & Infrastructure Engineer  
+**Scope:** Foreground background removal (`utils/segmentation.py`), 3D mesh inspection, non-manifold repair sequence & multi-format export (`utils/mesh_utils.py`), and test suite verification.
+
+#### Key Deliverables & Achievements
+
+| Artifact | Path | Description |
+|---|---|---|
+| **Foreground Isolation Engine** | [`utils/segmentation.py`](../utils/segmentation.py) | Rembg integration (U²-Net / IS-Net), high-res alpha mask extraction, tight bounding box calculation, aspect-ratio scaling, and 10% padding centering to canonical 512×512 format for 3D backbones. |
+| **Mesh Validation & Repair** | [`utils/mesh_utils.py`](../utils/mesh_utils.py) | Trimesh wrapper implementing the deterministic 7-step non-manifold recovery pipeline (§3.4): duplicate/degenerate face elimination, unreferenced vertex pruning, winding consistency, inverted normal fixing, hole filling, and connected component filtering. |
+| **Multi-Format 3D Exporter** | [`utils/mesh_utils.py`](../utils/mesh_utils.py) | Export pipelines for binary `.glb` (embedded PBR materials for WebGL/Three.js), `.obj` + `.mtl` material bundles, `.ply` with vertex colors, and `.stl` for 3D printing. |
+| **Expanded Test Suite** | [`tests/test_segmentation.py`](../tests/test_segmentation.py) & [`tests/test_mesh_utils.py`](../tests/test_mesh_utils.py) | 12 new unit and integration tests (79/79 passing suite) validating segmentation masks, bbox calculations, watertight verification, floating fragment pruning, and mesh exports. |
+| **Package Exports** | [`utils/__init__.py`](../utils/__init__.py) | Unified module interface exposing all image, preprocessing, segmentation, and mesh utility functions. |
+
+#### Cross-Team Integration Notes for Mona & Laxmi:
+- **For Mona (AI Engine)**: The output of `utils.segmentation.isolate_and_center()` provides the exact 512×512 centered subject input required by InstantMesh / Unique3D.
+- **For Laxmi (Frontend UI)**: The `.glb` exporter from `utils.mesh_utils.export_mesh()` produces binary glTF files directly compatible with the Gradio `gr.Model3D` component and Three.js WebGL viewport.
