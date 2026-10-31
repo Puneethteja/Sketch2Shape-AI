@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────
+#  Sketch2Shape AI  ·  .gitignore
+#  TechZephyr 4.0 Hackathon · IIT Bhubaneswar
+# ─────────────────────────────────────────────
+
+# ── Python virtual environments ──────────────
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ── Python cache & bytecode ──────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ── Distribution / packaging ─────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── Model weights & checkpoints ──────────────
+*.safetensors
+*.pth
+*.pt
+*.ckpt
+*.bin
+checkpoints/
+weights/
+models/
+
+# ── Hugging Face / diffusers cache ───────────
+.cache/
+~/.cache/huggingface/
+
+# ── Outputs & generated assets ───────────────
+outputs/*.png
+outputs/*.jpg
+outputs/*.obj
+outputs/*.glb
+outputs/*.ply
+
+# ── Jupyter Notebooks ────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS & editor artifacts ────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Logs & temp files ────────────────────────
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# ── Testing & coverage ───────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# ── rembg / u2net download cache ─────────────
+u2net/
