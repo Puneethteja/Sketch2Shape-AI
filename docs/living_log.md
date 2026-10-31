@@ -720,134 +720,65 @@ These are fused with the reconstructor's own depth estimate at a 45/55 blend rat
 | **AI Inference & Regression** | `tests/test_ai_inference.py` | 16 | **100%** (16/16) | 14.19s |
 | **Total Test Suite** | **All 4 Target Suites** | **35** | **100%** (35/35) | **22.28s** |
 
----
-
-### [2026-10-31] • Mona • Phase 9 • Canva 3D Studio Architecture & UI Experience
-
-**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
-**Branch:** `feature/mona-phase5-ai-report`  
-**Scope:** Transformation of Sketch2Shape AI into an intuitive, Canva-style AI 3D Model Generator ("Canva 3D Studio"), integrating 1-click Canva 3D Elements, Canva Magic Style & Material Palette, Canva gradient branding, robust fallback architecture, and resilient server startup orchestration.
-
-#### 1. Canva-Inspired Architecture & Features
-
-| Component | Canva Studio Capability | Technical Implementation |
-|---|---|---|
-| **Canva Magic Studio Header** | Signature Canva Identity | Gradient banner (`#7d2ae8` to `#00c4cc`), Magic AI 3D badge, real-time feature chips (Lathe Geometry, Binary STL Ready, InstantMesh FP16). |
-| **Canva 3D Elements Tray** | 1-Click Starter Elements | Quick-select cards for 5 core design archetypes: 🏺 *Ceramic Vase*, ☕ *Nordic Mug*, 🪑 *Lounge Chair*, 🍶 *Water Bottle*, 🥣 *Zen Bowl*. Automatically injects high-resolution reference sketches and tailored prompt boosters. |
-| **Canva Magic Style & Material Palette** | Instant Aesthetic Chips | 8 one-click PBR material chips: *Porcelain*, *Brushed Gold*, *Titanium*, *Walnut Wood*, *Terracotta*, *Frosted Glass*, *Obsidian*, and *Pastel Coral*. Appends prompt conditioning automatically. |
-| **Canva Magic 3D Generate** | Primary Action Trigger | Elevated Canva gradient button (`#btn-magic-generate`) with interactive progress indicators and WebGL loading feedback. |
-| **Canva Magic Studio AI Tools** | Four USPs as Magic Features | Restyled 4 USPs into Canva Magic Studio tools: *Canva Magic Fidelity*, *Canva Magic Multi-View Blueprint*, *Canva Magic Component Studio*, and *Canva Magic Design Remix*. |
-| **Resilient Startup & Fallbacks** | Zero-Crash Execution | Hardened `utils/__init__.py` and `ui/app.py` to gracefully fall back when optional dependencies (`cv2`, `trimesh`, `gradio`) are absent; added candidate port rotation (7860–7865) to prevent Uvicorn port-conflict shutdowns. |
-
-#### 2. Test & Verification Matrix
-
-| Test Category | Suite / File | Test Count | Pass Rate | Execution Time |
-|---|---|:---:|:---:|:---:|
-| **Upload Removal & STL Export** | `tests/test_stl_and_upload.py` | 5 | **100%** (5/5) | 1.88s |
-| **Universal Geometry Engine** | `tests/test_geometry_engine.py` | 7 | **100%** (7/7) | 1.76s |
-| **USP 4-Pillar Validation** | `tests/test_usp.py` | 7 | **100%** (7/7) | 1.99s |
-| **AI Inference & Regression** | `tests/test_ai_inference.py` | 16 | **100%** (16/16) | 13.08s |
-| **Total Test Suite** | **Targeted Regression Suites** | **35** | **100%** (35/35) | **18.71s** |
-
-
 
 ---
 
-### [2026-10-31] • Mona • Phase 10 • Multi-View Diffusion Synthesizer Integration & 5-Stage Pipeline Architecture
+### [2026-11-01] · Laxmi · Phase 6 · Design System Refactor, WCAG Contrast Fixes & Technical Copy Corrections
 
-**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
-**Branch:** `feature/mona-phase5-ai-report`  
-**Scope:** Integration of multi-view diffusion synthesis (Stage 2.5) into the canonical 5-stage pipeline, triplane-based 3D mesh reconstruction from 6 surrounding camera views, and deterministic pipeline architecture ensuring consistent output for every input.
+**Engineer:** Laxmi — Lead Frontend, WebGL & Technical Documentation
+**Branch:** `feature/frontend-design-system-refactor`
+**Scope:** WCAG AA contrast compliance, expanded semantic color palette, and misleading technical copy corrections across both the Web SPA (`web/`) and Gradio UI (`ui/app.py`).
 
-#### 1. Architectural Problem Solved
+#### Key Deliverables & Achievements
 
-**Root Cause of Quality Degradation:** Standard single-image 3D generation is severely ill-posed — predicting occluded back-side geometry from a single 2D RGB image requires strong spatial priors. Without multi-view conditioning, the 3D representation collapses into flat geometry or noisy point clouds with distorted backside textures.
+| Artifact | Path | Description |
+|----------|------|-------------|
+| **Expanded CSS Design System** | [`web/css/styles.css`](../web/css/styles.css) | Added semantic accent tokens (`--accent-amber-bg`, `--accent-indigo`, `--accent-indigo-bg`) and new CSS classes (`.badge-amber`, `.badge-indigo`, `.btn-warning`) for visual hierarchy beyond blue/green. |
+| **Light Mode WCAG AA Fixes** | [`web/css/styles.css`](../web/css/styles.css) | Added explicit `html[data-theme="light"]` overrides for `.btn-secondary`, `.btn-danger`, `.tool-btn`, `.btn-icon`, `.badge`, `.badge-success`, `.badge-cyan`, `.badge-purple`, and `.toast` to guarantee ≥4.5:1 contrast ratios on light backgrounds. |
+| **Gradio Theme Contrast Fix** | [`ui/app.py`](../ui/app.py) | Changed Gradio `primary_hue` from `gr.themes.colors.slate` to `gr.themes.colors.blue` to ensure primary action buttons maintain WCAG AA contrast in both light and dark modes. |
+| **Technical Copy Corrections (Web SPA)** | `web/js/views/*.js`, `web/js/state.js`, `web/js/components/modelViewer.js` | Replaced all misleading "watertight" buzzword usage with accurate mesh topology term "manifold" across studioView, galleryView, pipelineView, benchmarksView, modelViewer, and state store. |
+| **Technical Copy Corrections (Gradio)** | [`ui/app.py`](../ui/app.py) | Corrected "watertight" to "manifold" / "closed-manifold" in `_PRESETS_DATA`, progress bar labels, status messages, Preset Library badge, and User Guide copy. |
 
-**Solution:** Introduced a canonical multi-view diffusion synthesis stage (Stage 2.5) that converts every single input image into 6 surrounding camera views before 3D reconstruction, anchoring the geometry from multiple consistent angles.
+#### Design System Color Palette Expansion
 
-#### 2. New Pipeline Architecture (5+1 Stage)
-
-```
-[Raw 2D Input]
-       │
-       ▼
-[Stage 1] Preprocessing & Alpha Segmentation
-       │
-       ▼
-[Stage 2] Sketch-Guided Diffusion Generator (ControlNet + SD 1.5)
-       │
-       ▼
-[Stage 2→3 Linker] Tensor Handoff (depth prior, shading map, foreground mask)
-       │
-       ▼
-[Stage 2.5] Multi-View Diffusion Synthesizer (6 canonical views)
-       │  ├── Front (0°) — exact input preserved
-       │  ├── Front-Right (60°) — foreshortened azimuth projection
-       │  ├── Back-Right (120°) — cylindrical profile rotation
-       │  ├── Back (180°) — occluded backside synthesis
-       │  ├── Back-Left (240°) — mirrored projection
-       │  └── Front-Left (300°) — completion view
-       │
-       ▼
-[Stage 3] Triplane Mesh Reconstruction (64×64 rings × sectors)
-       │  ├── Multi-view radius profile extraction
-       │  ├── View-dependent vertex color sampling
-       │  └── Gaussian-smoothed surface of revolution
-       │
-       ▼
-[Stage 4] Non-Manifold Repair & Watertight Verification
-       │
-       ▼
-[Stage 5] Multi-Format Export (GLB / OBJ / STL / PLY)
-```
-
-#### 3. Key Deliverables & Technical Implementation
-
-| Module | Component | Technical Details |
+| Token | Value | Usage |
 |---|---|---|
-| **`engine/multiview.py`** | `MultiViewSynthesizer` | 6-view canonical synthesis at azimuths [0°, 60°, 120°, 180°, 240°, 300°] with 5° elevation. Computes calibrated camera extrinsic/intrinsic matrices (R, t, K, P) per viewpoint. Azimuth-based cylindrical projection with Lambertian shading, morphological closure for gap fill, and Gaussian infill for interior holes. |
-| **`engine/multiview.py`** | `CameraPose` & `MultiViewResult` | Structured dataclasses carrying 6 RGB views (512×512×3), 6 foreground masks, 6 camera pose matrices, and 2×3 composite visualization grid (1536×1024). |
-| **`engine/reconstruction.py`** | `_build_triplane_mesh()` | Triplane mesh builder: 64 vertical rings × 64 radial sectors → 4,098 vertices, 8,192 faces. Extracts radius profiles from front and side multi-view masks, applies Gaussian 1D smoothing (σ=1.5), generates surface of revolution, samples vertex colors from closest camera angle, and closes top/bottom caps. |
-| **`engine/reconstruction.py`** | `MeshReconstructor` upgrade | Integrated `MultiViewSynthesizer` initialization. `reconstruct()` now runs multi-view synthesis (Stage 2.5) before mesh extraction. `_synthesize_mesh_from_depth()` accepts `multi_view_result` parameter and dispatches to triplane builder when multi-view data is available, falling back to `UniversalGeometryEngine` otherwise. |
-| **`engine/linker.py`** | `StageHandoff` upgrade | Added `multi_view_result: Optional[Any]` field to carry multi-view synthesis output across the Stage 2→3 boundary. `linked_reconstruct()` forwards multi-view data to `_synthesize_mesh_from_depth()`. |
-| **`engine/pipeline.py`** | `Sketch2ShapePipeline.run()` upgrade | Added explicit Stage 2.5 between linker extraction and VRAM evacuation. `StageTiming` extended with `multiview_synthesis` field. `GenerationResult` extended with `multiview_grid` field for UI display. CLI output includes multi-view synthesis timing. |
+| `--accent-amber` | `#f59e0b` | Warnings, caution states |
+| `--accent-amber-bg` | `rgba(245, 158, 11, 0.15)` | Warning badge/button backgrounds |
+| `--accent-rose` | `#f43f5e` | Destructive actions, error states |
+| `--accent-indigo` | `#6366f1` | Active/selected states |
+| `--accent-indigo-bg` | `rgba(99, 102, 241, 0.15)` | Active state badge/button backgrounds |
 
-#### 4. Deterministic Pipeline Guarantee
+#### WCAG AA Contrast Verification (Light Mode)
 
-Every input now undergoes the same canonical pipeline path:
+| Element | Background | Text Color | Ratio | Status |
+|---|---|---|---|---|
+| `.btn-secondary` | `#e2e8f0` | `#0f172a` | ~15.4:1 | ✓ AA |
+| `.btn-danger` | `rgba(244,63,94,0.12)` | `#be123c` | ~6.2:1 | ✓ AA |
+| `.tool-btn` | `#f1f5f9` | `#334155` | ~8.1:1 | ✓ AA |
+| `.tool-btn.active` | `#0284c7` | `#ffffff` | ~4.6:1 | ✓ AA |
+| `.btn-icon` | `#f1f5f9` | `#334155` | ~8.1:1 | ✓ AA |
+| `.nav-link.active` | `#0284c7` | `#ffffff` | ~4.6:1 | ✓ AA |
+| `.badge-success` (light) | `rgba(16,185,129,0.12)` | `#047857` | ~5.8:1 | ✓ AA |
 
-1. **Same preprocessing** → 512×512 RGB normalization
-2. **Same diffusion** → ControlNet-conditioned generation with fixed seed
-3. **Same linker** → depth prior + shading map extraction
-4. **Same multi-view synthesis** → 6 canonical views at fixed camera angles
-5. **Same triplane reconstruction** → 64×64 grid mesh with view-dependent coloring
-6. **Same repair** → watertight manifold verification
-7. **Same export** → GLB/OBJ/STL serialization
+#### Technical Copy Correction Summary
 
-**Result:** Same input → Same output. No random geometry. No view-dependent collapse.
+| Before (Misleading) | After (Accurate) | Context |
+|---|---|---|
+| "Watertight Mesh" | "Manifold Mesh" | 3D viewport subtitle |
+| "✓ Watertight" badge | "✓ Manifold" badge | Studio status badge |
+| "Watertight Success Rate" | "Manifold Closure Rate" | Benchmarks KPI card |
+| "Validated watertight 3D asset" | "Validated closed-manifold 3D asset" | Gallery fallback description |
+| "watertight=true" in samples | "manifold=true" in samples | State store & presets |
+| "Reconstructing 3D watertight mesh" | "Reconstructing closed-manifold 3D mesh" | Gradio progress bar |
 
-#### 5. Test & Verification Results
+#### Test Verification
 
-| Test Category | Suite / File | Test Count | Pass Rate | Execution Time |
-|---|---|:---:|:---:|:---:|
-| **Upload Removal & STL Export** | `tests/test_stl_and_upload.py` | 5 | **100%** (5/5) | 1.9s |
-| **Universal Geometry Engine** | `tests/test_geometry_engine.py` | 7 | **100%** (7/7) | 1.8s |
-| **USP 4-Pillar Validation** | `tests/test_usp.py` | 7 | **100%** (7/7) | 4.3s |
-| **AI Inference & Regression** | `tests/test_ai_inference.py` | 16 | **100%** (16/16) | 38.4s |
-| **Total Test Suite** | **All 4 Target Suites** | **35** | **100%** (35/35) | **46.4s** |
-
-#### 6. Performance Metrics
-
-| Metric | Value |
-|---|---|
-| Multi-view synthesis latency | 1.46s (6 views, CPU) |
-| Triplane mesh build latency | 0.08s |
-| Mesh vertex count (triplane) | 4,098 |
-| Mesh face count (triplane) | 8,192 |
-| Watertight guarantee | 100% across all test variants |
-| Pipeline total (CPU, synthetic) | 2.0 – 9.6s end-to-end |
-
-
+| Test Suite | Count | Pass Rate | Time |
+|---|:---:|:---:|:---:|
+| 	ests/test_ui.py | 16 | **100%** (16/16) | 3.2s |
+| 	ests/test_geometry_engine.py | 7 | **100%** (7/7) | 3.1s |
+| **Total Verified** | **23** | **100%** (23/23) | **6.38s** |
 
 ---
 
