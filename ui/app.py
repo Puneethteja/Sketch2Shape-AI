@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import gc
 import io
 import logging
 import os
@@ -42,9 +43,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sketch2shape.ui")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-APP_TITLE   = "Sketch2Shape AI"
-APP_VERSION = "0.3.0-phase3"
+APP_TITLE = "Sketch2Shape AI"
+APP_VERSION = "0.4.0-phase4"
 
 SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
 SUPPORTED_UPLOAD_EXTENSIONS = [".png", ".jpg", ".jpeg"]
@@ -426,6 +426,65 @@ _HTML5_CANVAS_HTML = """
 </script>
 """
 
+def _is_blank_sketch(source: Any) -> bool:
+    if source is None:
+        return True
+    if isinstance(source, np.ndarray):
+        if source.size == 0:
+            return True
+        if float(np.std(source)) < 1.0:
+            return True
+        return False
+    if isinstance(source, str):
+        trimmed = source.strip()
+        if not trimmed:
+            return True
+        if trimmed.startswith("data:"):
+            try:
+                parts = trimmed.split(",", 1)
+                if len(parts) < 2:
+                    return True
+                raw = base64.b64decode(parts[1])
+                img = Image.open(io.BytesIO(raw)).convert("L")
+                arr = np.array(img, dtype=np.float32)
+                if float(np.std(arr)) < 1.0:
+                    return True
+            except Exception:
+                return True
+        else:
+            p = Path(trimmed)
+            if p.exists() and p.is_file():
+                try:
+                    with Image.open(p) as img:
+                        arr = np.array(img.convert("L"), dtype=np.float32)
+                        if float(np.std(arr)) < 1.0:
+                            return True
+                except Exception:
+                    pass
+    if isinstance(source, Image.Image):
+        arr = np.array(source.convert("L"), dtype=np.float32)
+        if float(np.std(arr)) < 1.0:
+            return True
+    return False
+
+def _validate_uploaded_file(path_str: Optional[str]) -> Tuple[bool, str]:
+    if not path_str:
+        return True, ""
+    p = Path(path_str)
+    if not p.exists():
+        return False, f"File does not exist: {p.name}"
+    ext = p.suffix.lower()
+    if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
+        return False, f"Unsupported format '{ext}'. Allowed: {', '.join(SUPPORTED_UPLOAD_EXTENSIONS)}"
+    if p.stat().st_size == 0:
+        return False, "File is empty (0 bytes)."
+    try:
+        with Image.open(p) as img:
+            img.verify()
+    except Exception as exc:
+        return False, f"Invalid or unreadable image: {exc}"
+    return True, ""
+
 def _resolve_input_source(
     canvas_image: Optional[np.ndarray] = None,
     uploaded_file: Optional[str] = None,
@@ -444,41 +503,23 @@ def _run_preprocessing(
     uploaded_file: Optional[str] = None,
     canvas_data_url: Optional[str] = None,
 ) -> Tuple[Optional[Image.Image], str]:
-    """
-    Stage 1 handler: ingest an HTML5 canvas drawing, Gradio sketchpad,
-    or uploaded file (.png, .jpg, .jpeg) and run Puneeth's preprocessing pipeline.
+    if uploaded_file is not None:
+        valid, err_msg = _validate_uploaded_file(uploaded_file)
+        if not valid:
+            gr.Warning(f"Invalid file upload: {err_msg}")
+            return None, f"⚠ Invalid file upload: {err_msg}"
 
-    Parameters
-    ----------
-    canvas_image : np.ndarray or None
-        RGBA array from the Gradio sketchpad (``gr.Sketchpad``).
-    uploaded_file : str or None
-        File path from the file-uploader component.
-    canvas_data_url : str or None
-        Base64 data-URL string from the interactive HTML5 drawing canvas.
-
-    Returns
-    -------
-    preview_image : PIL.Image or None
-        Preprocessed / lineart image to display in the output panel.
-    status_message : str
-        Human-readable pipeline status for the status textbox.
-    """
-    source: Optional[Union[np.ndarray, str]] = None
-
-    if canvas_image is not None:
-        logger.info("UI: Using canvas drawing (ndarray) as source")
-        source = canvas_image
-    elif uploaded_file is not None:
-        logger.info("UI: Using uploaded file as source: %s", uploaded_file)
-        source = uploaded_file
-    elif canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
-        logger.info("UI: Using HTML5 drawing canvas (base64 data-URL) as source")
-        source = canvas_data_url
-    else:
+    source = _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+    if source is None:
+        gr.Warning("No sketch provided. Draw on canvas or upload an image.")
         return None, "⚠  No input provided. Draw on the canvas or upload a sketch (.png, .jpg, .jpeg)."
 
+    if _is_blank_sketch(source):
+        gr.Warning("Blank canvas detected. Please draw a sketch before preprocessing.")
+        return None, "⚠  Blank canvas detected. Please draw a sketch or upload an image."
+
     if not _PREPROCESSING_AVAILABLE:
+        gr.Warning("Preprocessing engine unavailable in current environment.")
         return None, "⚠  Preprocessing engine unavailable. Ensure engine/preprocessing.py is importable."
 
     try:
@@ -486,105 +527,120 @@ def _run_preprocessing(
         preview = Image.fromarray(result_np)
         return preview, "✔  Preprocessing complete. Ready for AI generation."
     except Exception as exc:
+        gr.Warning(f"Preprocessing notice: {exc}")
         return None, f"✘  Preprocessing failed: {exc}"
 
 def _run_ai_generation(
-    prompt: str,
-    controlnet_scale: float,
-    num_inference_steps: int,
-    seed: int,
+    prompt: str = "",
+    controlnet_scale: float = 0.85,
+    num_inference_steps: int = 30,
+    seed: int = -1,
     canvas_image: Optional[np.ndarray] = None,
     uploaded_file: Optional[str] = None,
     canvas_data_url: Optional[str] = None,
-) -> Tuple[Optional[Image.Image], str]:
-    if not _AI_ENGINE_AVAILABLE:
-        return None, "[!] AI engine unavailable. Ensure engine/ai_engine.py is importable."
+    preprocessed_preview: Optional[Image.Image] = None,
+    progress: gr.Progress = gr.Progress(track_tqdm=True),
+) -> Tuple[Optional[Image.Image], Optional[str], str, str]:
+    global _LAST_GENERATED_MESH
 
-    source_candidate: Optional[Union[np.ndarray, str, Image.Image]] = None
-    if canvas_image is not None:
-        source_candidate = canvas_image
-    elif uploaded_file is not None:
-        source_candidate = uploaded_file
-    elif canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
-        source_candidate = canvas_data_url
+    if uploaded_file is not None:
+        valid, err_msg = _validate_uploaded_file(uploaded_file)
+        if not valid:
+            gr.Warning(f"Invalid sketch upload: {err_msg}")
+            return None, None, f"⚠ Invalid sketch upload: {err_msg}", ""
 
-    if source_candidate is None:
-        return None, "⚠ No sketch input provided. Draw on the canvas or upload a sketch first."
+    source = None
+    if preprocessed_preview is not None:
+        source = preprocessed_preview
+    else:
+        source = _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+
+    if source is None:
+        gr.Warning("No input sketch provided. Draw on canvas or upload an image.")
+        return None, None, "⚠  No input sketch provided. Draw on canvas or upload an image.", ""
+
+    if _is_blank_sketch(source):
+        gr.Warning("Blank sketch detected. Please draw on canvas or upload a sketch before generating.")
+        return None, None, "⚠  Blank canvas detected. Please draw a sketch or upload an image.", ""
+
+    if not _PIPELINE_AVAILABLE:
+        gr.Warning("AI Pipeline backend unavailable.")
+        return None, None, "⚠  AI Pipeline backend unavailable.", ""
 
     try:
-        concrete_seed = int(seed) if seed is not None and seed != -1 else -1
-        result = _ai_engine.generate(
-            source=source_candidate,
-            prompt=prompt,
-            controlnet_scale=float(controlnet_scale),
-            num_inference_steps=int(num_inference_steps),
-            seed=concrete_seed,
-        )
-
-        from utils.mesh_utils import export_mesh, repair_mesh
-        validated_mesh = repair_mesh(
-            result.mesh,
-            strip_floating=True,
-            fill_holes=True,
-            center_and_scale=True,
-        )
-        _SESSION["current_mesh"] = validated_mesh
-        _SESSION["last_result"] = result
+        progress(0.1, desc="Ingesting & preprocessing sketch...")
+        pipeline = Sketch2ShapePipeline()
 
         outputs_dir = Path("outputs")
         outputs_dir.mkdir(parents=True, exist_ok=True)
-        preview_glb = outputs_dir / f"preview_{result.seed_used}.glb"
-        export_mesh(validated_mesh, preview_glb, export_format="glb")
-        _SESSION["current_glb"] = str(preview_glb.resolve())
+        export_glb_path = outputs_dir / "sketch2shape_generated.glb"
 
-        depth_vis: Optional[Image.Image] = None
-        if result.depth_map is not None:
-            depth_arr = result.depth_map
-            if depth_arr.dtype != np.uint8:
-                depth_vis_arr = (depth_arr * 255.0).clip(0, 255).astype(np.uint8)
-            else:
-                depth_vis_arr = depth_arr
-            depth_vis = Image.fromarray(depth_vis_arr)
-        elif result.generated_image is not None:
-            depth_vis = result.generated_image
-
-        status = (
-            f"[OK] Generation complete — seed={result.seed_used} "
-            f"latency={result.latency_seconds:.2f}s "
-            f"watertight={validated_mesh.is_watertight}"
+        progress(0.35, desc="Running diffusion generator...")
+        result: GenerationResult = pipeline.run(
+            sketch_source=source,
+            prompt=prompt,
+            controlnet_scale=float(controlnet_scale),
+            num_inference_steps=int(num_inference_steps),
+            seed=int(seed),
+            export_path=export_glb_path,
+            export_format="glb",
         )
-        logger.info("UI: %s", status)
-        return depth_vis, status
-    except Exception as exc:
-        logger.error("UI: AI generation error: %s", exc, exc_info=True)
-        return None, f"[ERR] AI generation failed: {exc}"
 
+        progress(0.85, desc="Reconstructing 3D watertight mesh...")
+        _LAST_GENERATED_MESH = result.mesh
+        _SESSION["current_mesh"] = result.mesh
+        _SESSION["last_result"] = result
+
+        depth_preview = None
+        if hasattr(result, "depth_image") and result.depth_image is not None:
+            depth_preview = result.depth_image
+        elif result.depth_map is not None:
+            depth_scaled = (result.depth_map * 255.0).clip(0, 255).astype(np.uint8)
+            depth_preview = Image.fromarray(depth_scaled)
+        elif result.generated_image is not None:
+            depth_preview = result.generated_image
+
+        progress(1.0, desc="Rendering asset in WebGL previewer...")
+        status_msg = (
+            f"✔ Generated watertight 3D asset in {result.latency_seconds:.2f}s | "
+            f"Faces: {len(result.mesh.faces):,} | "
+            f"Vertices: {len(result.mesh.vertices):,} | "
+            f"VRAM Peak: {result.vram_peak_mb:.1f} MB | "
+            f"Seed: {result.seed_used}"
+        )
+        glb_url = f"/file={export_glb_path.as_posix()}"
+
+        gr.Info("3D Asset generated successfully.")
         return depth_preview, str(export_glb_path), status_msg, glb_url
 
+    except TimeoutError:
+        gr.Warning("Backend GPU execution timeout. Operation aborted to preserve session responsiveness.")
+        return None, None, "✘  GPU execution timed out. Try reducing inference steps.", ""
+
     except Exception as exc:
+        exc_str = str(exc).lower()
+        if "out of memory" in exc_str or "cuda" in exc_str:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+            gc.collect()
+            gr.Warning("GPU VRAM Out-of-Memory detected. Cache evacuated. Try reducing inference steps or use CPU mode.")
+            return None, None, "✘  GPU Out-of-Memory error. Try reducing steps or resolution.", ""
+
         logger.error("UI Generation Pipeline Error: %s", exc, exc_info=True)
+        gr.Warning(f"Generation interrupted: {exc}")
         return None, None, f"✘  Generation failed: {exc}", ""
 
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
-    logger.info("UI: Mesh export requested — format=%s", export_format)
-    mesh = _SESSION.get("current_mesh")
-    if mesh is None:
-        return None, "[!] No mesh in session. Run AI generation first."
-    try:
-        from utils.mesh_utils import export_mesh
-        ext_map = {"OBJ": ".obj", "GLB": ".glb", "STL": ".stl", "PLY": ".ply"}
-        ext = ext_map.get(export_format.upper(), ".obj")
-        tmp = tempfile.NamedTemporaryFile(
-            delete=False, suffix=ext, prefix="sketch2shape_",
-        )
-        tmp.close()
-        out_path = export_mesh(mesh, tmp.name, export_format=export_format.lower())
-        status = f"[OK] Exported {export_format} mesh to {out_path}"
-        logger.info("UI: %s", status)
-        return str(out_path), status
-    except Exception as exc:
-        logger.error("UI: Mesh export error: %s", exc, exc_info=True)
-        return None, f"[ERR] Mesh export failed: {exc}"
+    global _LAST_GENERATED_MESH
+
+    fmt = export_format.lower()
+    outputs_dir = Path("outputs")
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    out_path = outputs_dir / f"sketch2shape_asset.{fmt}"
 
     active_mesh = _LAST_GENERATED_MESH or _SESSION.get("current_mesh")
 
@@ -592,23 +648,27 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
         try:
             if hasattr(active_mesh, "export"):
                 active_mesh.export(str(out_path), file_type=fmt)
+                gr.Info(f"Exported {export_format.upper()} asset.")
                 return str(out_path), f"✔  Exported active mesh to {export_format.upper()}: {out_path.name}"
         except Exception as exc:
+            gr.Warning(f"Export error: {exc}")
             return None, f"✘  Export failed: {exc}"
 
     glb_file = outputs_dir / "sketch2shape_generated.glb"
     if glb_file.exists() and fmt == "glb":
+        gr.Info("Exported GLB asset.")
         return str(glb_file), f"✔  Exported {glb_file.name}"
 
+    gr.Info(f"No active mesh in session. Generate a 3D asset first.")
     return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
 
 def _clear_session() -> Tuple:
-    logger.info("UI: Session cleared by user")
+    global _LAST_GENERATED_MESH
+    _LAST_GENERATED_MESH = None
     _SESSION["current_mesh"] = None
     _SESSION["current_source"] = None
-    _SESSION["preprocessed_source"] = None
     _SESSION["last_result"] = None
-    _SESSION["current_glb"] = None
+    gr.Info("Session reset.")
     return (
         None,
         None,
@@ -650,6 +710,10 @@ def build_ui() -> gr.Blocks:
             resize: none !important;
         }
         .export-row button { font-size: 12px !important; }
+        @media (max-width: 768px) {
+            .gradio-container { padding: 8px !important; }
+            div#s2s-canvas-component { padding: 6px !important; }
+        }
         """,
     ) as app:
 
@@ -830,8 +894,6 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=[depth_view, export_file, status_bar, glb_url_holder],
             _js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('AI Engine generating 3D asset...', 20); } }",
-            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input, canvas, file_upload, canvas_data_holder],
-            outputs=[depth_view, status_bar],
         )
 
         btn_export.click(
