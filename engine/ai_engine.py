@@ -5,7 +5,8 @@ Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
 Lead Engineer : Mona (Generative AI & 3D Reconstruction)
 
 Public API interface for Contract B connecting AI Engine with the Gradio UI layer (ui/app.py).
-Conforms strictly to Technical Architecture Specification §4.2.
+Conforms strictly to Technical Architecture Specification SS4.2.
+Phase 3: Exposes stage_timing, handoff_metadata, is_watertight, vertex_count, face_count.
 """
 
 from __future__ import annotations
@@ -15,23 +16,21 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-# Ensure project root is in sys.path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from engine.pipeline import GenerationResult, Sketch2ShapePipeline
+from engine.pipeline import GenerationResult, Sketch2ShapePipeline, StageTiming
 
 logger = logging.getLogger("sketch2shape.ai_engine")
 
-__all__ = ["GenerationResult", "generate"]
+__all__ = ["GenerationResult", "StageTiming", "generate", "get_pipeline"]
 
-# Module-level singleton pipeline instance
 _GLOBAL_PIPELINE: Optional[Sketch2ShapePipeline] = None
 
 
 def get_pipeline(device: Optional[str] = None) -> Sketch2ShapePipeline:
-    """Returns or initializes the global pipeline instance."""
+    """Returns or initializes the global singleton pipeline instance."""
     global _GLOBAL_PIPELINE
     if _GLOBAL_PIPELINE is None:
         _GLOBAL_PIPELINE = Sketch2ShapePipeline(device=device)
@@ -39,19 +38,20 @@ def get_pipeline(device: Optional[str] = None) -> Sketch2ShapePipeline:
 
 
 def generate(
-    source: Any,
+    sketch_input: Any = None,
     prompt: str = "",
     controlnet_scale: float = 0.85,
     num_inference_steps: int = 30,
     seed: int = -1,
     device: Optional[str] = None,
+    source: Any = None,
 ) -> GenerationResult:
     """
-    Contract B Producer Function (§4.2).
+    Contract B Producer Function (SS4.2).
     Generates a 3D asset from an input sketch and returns a GenerationResult.
 
     Parameters:
-        source: Preprocessed lineart tensor, PIL.Image, or NumPy array.
+        sketch_input: Preprocessed lineart tensor, PIL.Image, or NumPy array.
         prompt: Optional text description for materials and styling.
         controlnet_scale: ControlNet conditioning weight (calibrated 0.7 - 0.95).
         num_inference_steps: Diffusion denoising steps (default: 30).
@@ -59,16 +59,25 @@ def generate(
         device: Target execution device ('cuda' or 'cpu').
 
     Returns:
-        GenerationResult dataclass:
-            depth_map: shape (512, 512), float32, range [0, 1]
-            normal_map: shape (512, 512, 3), float32, range [0, 1]
-            mesh: watertight trimesh.Trimesh
-            seed_used: concrete integer
-            vram_peak_mb: peak VRAM in MB during inference
+        GenerationResult with fields:
+            depth_map        : (512, 512) float32 [0, 1]
+            normal_map       : (512, 512, 3) float32 [0, 1]
+            mesh             : watertight trimesh.Trimesh
+            seed_used        : concrete integer seed
+            vram_peak_mb     : peak VRAM in MB
+            generated_image  : PIL.Image 2.5D render
+            latency_seconds  : total pipeline wall-clock time
+            stage_timing     : StageTiming breakdown per stage
+            handoff_metadata : linker extraction metrics dict
+            is_watertight    : bool (property)
+            vertex_count     : int (property)
+            face_count       : int (property)
+            depth_image      : PIL.Image grayscale depth preview (property)
     """
     pipeline = get_pipeline(device=device)
+    resolved_input = sketch_input if sketch_input is not None else source
     return pipeline.run(
-        sketch_source=source,
+        sketch_source=resolved_input,
         prompt=prompt,
         controlnet_scale=controlnet_scale,
         num_inference_steps=num_inference_steps,

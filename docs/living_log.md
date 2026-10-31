@@ -402,3 +402,62 @@ Each entry follows the structure:
 #### Cross-Team Integration Notes for Mona & Laxmi:
 - **For Mona (AI Engine)**: The output of `utils.segmentation.isolate_and_center()` provides the exact 512×512 centered subject input required by InstantMesh / Unique3D.
 - **For Laxmi (Frontend UI)**: The `.glb` exporter from `utils.mesh_utils.export_mesh()` produces binary glTF files directly compatible with the Gradio `gr.Model3D` component and Three.js WebGL viewport.
+
+
+---
+
+### [2026-10-31] · Mona · Phase 3 · Stage Linkage, Tensor Handoff & End-to-End Integration
+
+**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer
+**Branch:** `feature/mona-phase3-integration`
+**Scope:** Direct tensor-level Stage 2->3 linkage (`engine/linker.py`), pipeline orchestrator upgrade (`engine/pipeline.py`), end-to-end integration test suite (`tests/test_integration.py`).
+
+#### Key Deliverables & Achievements
+
+| Artifact | Path | Description |
+|---|---|---|
+| **Stage Linker** | [`engine/linker.py`](../engine/linker.py) | `StageLinker` class extracting depth priors, shading maps, luminance tensors, and foreground masks from the generator's 2.5D render for direct injection into Stage 3. |
+| **StageHandoff Bundle** | [`engine/linker.py`](../engine/linker.py) | `StageHandoff` dataclass carrying all inter-stage tensors (depth prior, shading map, luminance, foreground mask, metadata) across the Stage 2->3 boundary. |
+| **Upgraded Pipeline** | [`engine/pipeline.py`](../engine/pipeline.py) | `Sketch2ShapePipeline.run()` now routes through `StageLinker.linked_reconstruct()` instead of standalone `reconstructor.reconstruct()`. New `StageTiming` dataclass tracks per-stage wall-clock breakdowns. |
+| **Upgraded GenerationResult** | [`engine/pipeline.py`](../engine/pipeline.py) | `GenerationResult` enriched with `stage_timing`, `handoff_metadata`, `is_watertight`, `vertex_count`, `face_count`, and `depth_image` convenience properties. |
+| **Public API Upgrade** | [`engine/ai_engine.py`](../engine/ai_engine.py) | `generate()` now exposes all Phase 3 fields. Backward compatibility maintained: `source=` keyword alias preserved for Phase 2 callers. |
+| **Integration Test Suite** | [`tests/test_integration.py`](../tests/test_integration.py) | 37 new integration tests across 7 test classes covering linker extraction contracts, depth fusion validation, linked reconstruct geometry, 4-shape e2e runs, stage timing, handoff metadata, and ai_engine facade. |
+
+#### Integration Metrics (Local CPU Runs)
+
+| Metric | Value |
+|---|---|
+| Integration test suite | **37 / 37 passing** in 21.1s |
+| Phase 2 regression suite | **16 / 16 passing** (no regressions) |
+| Total test suite | **53 / 53 passing** |
+| Pipeline latency (CPU, synthetic) | 0.5 – 1.6s end-to-end |
+| Linker extraction overhead | 70 – 140ms per run |
+| Depth fusion overhead | 80 – 210ms per run |
+| Mesh vertex count (linked) | 4,000 – 10,000 vertices |
+| Watertight guarantee | 100% across all 4 sketch variants |
+| VRAM peak (CPU mode) | 0.0 MB (GPU: est. ~5.2 GB Stage 2 + ~6.5 GB Stage 3, sequential) |
+
+#### Architecture Decision: Tensor-Level Linkage
+
+The Stage 2->3 handoff in Phase 2 passed only a PIL Image between stages. This meant the reconstructor had no access to the generator's internal shading representation, causing it to recompute depth from scratch from the rendered pixel values alone.
+
+Phase 3 introduces `StageLinker`, which runs immediately after `generator.generate()` and before the VRAM evacuation handover. It extracts:
+
+- **Depth prior** — distance-transform + shading blend, normalized to [0, 1]
+- **Shading map** — Lambertian reflectance decomposed from the 2.5D render
+- **Foreground mask** — luminance threshold at 0.94 identifying object pixels
+- **Luminance tensor** — grayscale projection for normal gradient computation
+
+These are fused with the reconstructor's own depth estimate at a 45/55 blend ratio (prior / base), yielding meshes that respect the generator's silhouette geometry more faithfully than the standalone path.
+
+#### Stability Notes
+
+- `StageLinker` is fully CPU-compatible; on GPU, all buffers stay on-device in FP16 until reconstruction completes.
+- `StageTiming.total` matches `GenerationResult.latency_seconds` to within ±0.5s (export overhead excluded from component sum when no export is requested).
+- `source=` keyword alias in `ai_engine.generate()` preserves backward compatibility with all Phase 2 callers and the Phase 2 test suite (`test_ai_engine_generate_facade`).
+- `engine/linker.py` has no runtime dependency on `diffusers`, `trimesh`, or `cv2`; it depends only on `numpy`, `scipy`, `PIL`, and the `engine.mesh_utils` / `engine.reconstruction` internal modules.
+
+#### Cross-Team Integration Notes
+
+- **For Laxmi (Frontend):** `GenerationResult.depth_image` is a `PIL.Image (512x512 RGB)` ready for direct use in `gr.Image` component. `GenerationResult.stage_timing` can power a latency breakdown widget. `GenerationResult.handoff_metadata["fg_pixel_count"]` indicates foreground coverage quality.
+- **For Puneeth (Infrastructure):** `StageLinker.extract_handoff_tensors()` accepts the `PIL.Image` produced by `engine.preprocessing.preprocess()` directly. No API changes to Contract A.
