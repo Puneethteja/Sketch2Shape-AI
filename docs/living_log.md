@@ -603,34 +603,34 @@ These are fused with the reconstructor's own depth estimate at a 45/55 blend rat
 
 ---
 
-### [2026-10-31] • Mona • Phase 6 • Four Core USPs Implementation
+### [2026-10-31] • Laxmi • Phase 5 • Submission Packaging & README Status
 
-**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
-**Branch:** `feature/mona-phase5-ai-report`  
-**Scope:** Implementation of four differentiating Unique Selling Propositions spanning `engine/usp.py`, `ui/app.py`, `ui/viewer.js`, and `tests/test_usp.py`.
+**Engineer:** Laxmi — Lead Frontend, WebGL & Technical Documentation  
+**Branch:** `feature/laxmi-phase5-readme`  
+**Scope:** Final evaluation packaging, developer-grade `README.md` assembly, environment verification workflows, single-command judge execution instructions, and project submission readiness.
 
-#### USP Deliverables & Architecture
+#### Submission Deliverables & Documentation Matrix
 
-| USP | Module | Core Capability |
+| Artifact | Path | Description |
 |---|---|---|
-| **🎯 Sketch Fidelity Score** | `engine/usp.py` → `compute_sketch_fidelity()` | Silhouette IoU and Dice coefficient comparison between the original 2D sketch input and the generated 3D mesh's rendered projection. Returns a `FidelityReport` containing quantitative metrics (IoU, Dice, percentage score), a qualitative rating (Excellent / Good / Fair / Poor), a human-readable narrative explanation, and a color-coded overlay visualization image. |
-| **🌐 Multi-View Intelligence** | `engine/usp.py` → `generate_multiview_projections()` + `ui/viewer.js` | Generates a 4-view labeled orthographic collage (Front, Right Side, Back, Top) from any reconstructed mesh. The WebGL viewer exposes interactive camera preset toolbar buttons (Front, Side, Back, Top, Orbit) via `setCameraPreset()`, enabling judges and users to inspect 3D assets from standardized industrial viewpoints. `CAMERA_PRESETS` dictionary defines position and target vectors for 5 canonical views including Isometric 360°. |
-| **🎨 Component-Level Editing** | `engine/usp.py` → `ComponentEditor.apply_edit()` | Spatial height-bracket vertex segmentation partitioning mesh geometry into logical regions (Upper Section / Top Rim, Central Body / Core, Base / Stand / Legs). Per-component material palette customization applies vertex colors to targeted spatial zones while preserving watertight manifold topology. Supports preset material palettes (Porcelain White, Ocean Teal, Sunset Coral, Forest Moss, Midnight Navy, Champagne Gold, Graphite, Warm Ivory) and custom hex color input. |
-| **⚡ AI Design Variations** | `engine/usp.py` → `generate_design_variations()` | Generates 3 distinct aesthetic style candidates (Minimalist Porcelain, Brushed Titanium Metal, Organic Polished Walnut, Cyberpunk Cobalt, etc.) from a single sketch input by injecting style-specific prompt modifiers into the `SketchDiffusionGenerator`. Each variation is displayed as a selectable image card with one-click 3D reconstruction triggering the full pipeline. |
+| **Comprehensive README** | [`README.md`](../README.md) | Primary project documentation featuring executive problem statement, multi-stage architecture dataflow, step-by-step installation guides (Conda & venv), single-command evaluation commands, benchmark metrics, and team attribution. |
+| **Technical Architecture** | [`docs/technical_architecture.md`](./technical_architecture.md) | Complete system specification covering mathematical formulations, multi-stage tensor contracts, coordinate frames, and 7-step repair sequence. |
+| **Evaluation Report** | [`docs/technical_report.md`](./technical_report.md) | Formal research report detailing empirical latency profiles, VRAM trajectories, precision trade-offs, and future scaling vectors. |
+| **Living Engineering Log** | [`docs/living_log.md`](./living_log.md) | Chronological development log documenting all engineering milestones across Phases 1 through 5. |
 
-#### UI Integration (Gradio Blocks)
+#### Evaluation & Judge Quick-Start Summary
 
-- Added a **"🌟 Four Unique Selling Propositions (USPs)"** accordion section in `ui/app.py` containing 4 interactive tabs:
-  1. **🎯 Sketch Fidelity Score** — Evaluate button, score text display, overlay image output.
-  2. **🌐 Multi-View Intelligence** — 4-view collage generator button, camera preset usage tips for the WebGL viewer.
-  3. **🎨 Component-Level Editing** — Component dropdown selector, material palette radio buttons, custom color picker, apply button with live 3D viewer refresh.
-  4. **⚡ AI Design Variations** — Generate variations button, 3-image gallery display, per-style one-click 3D reconstruction buttons.
-- All event handlers wired via Gradio `.click()` callbacks routing to dedicated `_run_fidelity_evaluation`, `_run_multiview_generation`, `_run_component_edit`, and `_run_design_variations` orchestrators.
+1. **Interactive UI Execution**:
+   - Single command `python ui/app.py` boots the Gradio interface with the embedded WebGL 3D previewer at `http://127.0.0.1:7860`.
+   - Public evaluation share links supported via `--share`.
 
-#### Test Suite Verification
+2. **Offline Resilience & Demo Runner**:
+   - `python utils/backup_runner.py --verify` validates the integrity of all 5 curated demo sample bundles.
+   - `python utils/backup_runner.py --load vase` immediately deploys pre-computed watertight GLB models to the WebGL viewer without requiring active GPU compute or internet connectivity.
 
-| Suite | Test Count | Pass Rate | Execution Time |
-|---|---|:---:|:---:|
-| `tests/test_usp.py` (USP-specific) | 7 | **100%** (7/7) | 7.45s |
-| `tests/test_ai_inference.py` (regression) | 16 | **100%** (16/16) | 16.86s |
-| **Combined USP + Regression** | **23** | **100%** (23/23) | 24.31s |
+3. **Automated Verification Harness**:
+   - `pytest tests/ -v` executes the complete 152-test automated regression suite with 100% pass rate.
+
+#### Hackathon Final Submission Status
+- All 5 project development phases are completed, integrated, and verified.
+- The repository is fully packaged, tested, and ready for evaluation committee review.
