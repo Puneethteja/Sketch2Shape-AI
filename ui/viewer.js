@@ -226,6 +226,19 @@
             controlsGroup.appendChild(fullscreenBtn);
             this.dom.fullscreenBtn = fullscreenBtn;
 
+            const viewGroup = document.createElement("div");
+            viewGroup.style.cssText = "display:flex;align-items:center;gap:3px;margin-left:4px;border-left:1px solid " + THEME.border + ";padding-left:6px;";
+            ["Front", "Side", "Back", "Top", "Orbit"].forEach((vName) => {
+                const btn = document.createElement("button");
+                btn.className = "s2s-btn";
+                btn.style.cssText += "padding:3px 6px;font-size:10px;font-family:monospace;";
+                btn.textContent = vName;
+                btn.title = "Switch camera to " + vName + " view";
+                btn.addEventListener("click", () => this.setCameraPreset(vName.toLowerCase()));
+                viewGroup.appendChild(btn);
+            });
+            controlsGroup.appendChild(viewGroup);
+
             toolbar.appendChild(controlsGroup);
 
             const downloadGroup = document.createElement("div");
@@ -439,6 +452,26 @@
             this.camera.position.set(0, 1.5, 3.2);
             this.controls.target.set(0, 0.5, 0);
             this.controls.update();
+        }
+
+        setCameraPreset(name) {
+            if (!this.camera || !this.controls) return;
+            const presets = {
+                front: { pos: [0, 0.5, 3.2], target: [0, 0.5, 0] },
+                side: { pos: [3.2, 0.5, 0], target: [0, 0.5, 0] },
+                right: { pos: [3.2, 0.5, 0], target: [0, 0.5, 0] },
+                back: { pos: [0, 0.5, -3.2], target: [0, 0.5, 0] },
+                top: { pos: [0, 3.8, 0.001], target: [0, 0.2, 0] },
+                orbit: { pos: [2.2, 1.8, 2.2], target: [0, 0.5, 0] },
+            };
+            const key = (name || "front").toLowerCase();
+            const p = presets[key] || presets.front;
+            this.camera.position.set(p.pos[0], p.pos[1], p.pos[2]);
+            this.controls.target.set(p.target[0], p.target[1], p.target[2]);
+            this.controls.update();
+            if (this.dom.statBadge) {
+                this.dom.statBadge.textContent = "View: " + key.toUpperCase();
+            }
         }
 
         resetAsset() {
