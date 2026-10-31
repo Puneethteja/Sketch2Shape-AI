@@ -118,7 +118,19 @@ Each entry follows the structure:
 
 ---
 
+<<<<<<< HEAD
+| Item | Owner | Target phase | Status |
+|------|-------|-------------|--------|
+| `engine/ai_engine.py` — implement `generate()` + `GenerationResult` | Mona | Phase 2 | Pending |
+| `engine/mesh_utils.py` — implement `repair_mesh()` | Mona + Laxmi | Phase 2 | In Progress |
+| Three.js WebGL viewport integration | Laxmi | Phase 2 | **Completed** |
+| HTML5 Drawing Canvas & Toolbar | Laxmi | Phase 2 | **Completed** |
+| Drag-and-drop raster uploader (.png, .jpg, .jpeg) | Laxmi | Phase 2 | **Completed** |
+| Session state management & base64 sync | Laxmi | Phase 2 | **Completed** |
+| `gradio` added to `requirements.txt` | Puneeth / Laxmi | Immediate | **Completed** |
+=======
 ### [2026-10-31] · Mona · Phase 1 · Local AI Inference Verification & Checkpoint Architecture
+>>>>>>> 8e6cffd67cc26517bffe30e099fb9dc5d555828a
 
 **Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
 **Scope:** Hardware verification (`check_gpu.py`), Checkpoint hierarchy (`engine/checkpoints/`), and pipeline smoke test (`engine/test_pipeline.py`)
@@ -176,6 +188,109 @@ Each entry follows the structure:
 | Three.js WebGL viewport integration in Gradio | Laxmi | Phase 2 | Canvas stub verified in UI |
 | Multi-view Zero123++ diffusion backbone | Mona | Phase 2 | Checkpoints registered |
 | InstantMesh LRM Marching Tetrahedra exporter | Mona | Phase 2 | Checkpoints registered |
+
+---
+
+### [2026-10-31] · Laxmi · Phase 2 · Interactive HTML5 Drawing Canvas & WebGL 3D Viewer Integration
+
+**Engineer:** Laxmi — Lead Frontend, WebGL & Technical Documentation  
+**Scope:** HTML5 drawing canvas (`ui/app.py`), WebGL 3D viewer component (`ui/viewer.js`), file upload zone, style prompt field, and smoke-test suite (`tests/test_ui.py`)
+
+#### Deliverables shipped
+
+| Artifact | Path | Description |
+|----------|------|-------------|
+| Interactive UI | [`ui/app.py`](../ui/app.py) | Full Gradio Blocks interface featuring custom HTML5 drawing canvas, file uploader (.png/jpg/jpeg), prompt inputs, and dual-viewport layout |
+| WebGL 3D Viewer | [`ui/viewer.js`](../ui/viewer.js) | Three.js / @google/model-viewer 3D component with 360° orbit, pan, zoom, loading spinners, and binary GLB download triggers |
+| UI Smoke Test Suite | [`tests/test_ui.py`](../tests/test_ui.py) | 13 test cases covering components, formats, base64 data-URL preprocessing, viewer script validation, and canvas controls |
+| Living Log (this file) | [`docs/living_log.md`](./living_log.md) | Phase 2 completion milestone |
+
+#### HTML5 Canvas Architecture decisions
+
+- **PointerEvents input abstraction:** Implemented `pointerdown`, `pointermove`,
+  `pointerup`, and `pointercancel` with `setPointerCapture()` to provide uniform
+  pen pressure, stylus, mouse, and touch interaction. Multi-touch gestures are
+  isolated to prevent browser viewport scrolling while drawing.
+
+- **High-DPI resolution scaling:** Canvas uses a native 512×512 resolution backing
+  mapped to display dimensions, preventing blurriness on Retina and high-DPI
+  laptop displays.
+
+- **Midpoint Quadratic Bézier curve smoothing:** Rather than connecting raw discrete
+  pointer samples with straight line segments, midpoints between sequential
+  samples are computed and interpolated via `ctx.quadraticCurveTo()`. This produces
+  silky smooth strokes and eliminates aliasing artifacts before lineart extraction.
+
+- **Undo / Redo buffer stacks:** Implemented dual history stacks (`undoStack` and
+  `redoStack`) capturing full-resolution `ImageData` snapshots before each stroke,
+  capped at 30 history states to preserve memory. Undo and Redo buttons are
+  dynamically enabled/disabled with real-time stack depth counters.
+
+- **Eraser & Clear canvas integration:** The eraser tool switches stroke colors
+  to match the clean white canvas background (`#ffffff`), ensuring the exported
+  raster remains an opaque RGB field easily thresholded by OpenCV in Stage 1.
+  Clearing the canvas snapshots current state to the undo buffer so accidental
+  resets can be immediately reversed.
+
+- **Bidirectional Gradio synchronization:** Canvas modifications trigger automated
+  `toDataURL("image/png")` serialisation into a hidden Gradio buffer element
+  (`#canvas-data-holder`), dispatching standard DOM `input` and `change` events.
+  `_run_preprocessing()` ingests these base64 data-URLs directly via
+  `engine.preprocessing.ingest()`.
+
+- **Retaining backward compatibility:** Gradio's standard `gr.Sketchpad` is
+  preserved inside a collapsed fallback accordion to guarantee that existing
+  component inventory tests and headless environments function without disruption.
+
+#### WebGL 3D Viewer Architecture decisions
+
+- **Three.js & OrbitControls integration:** Embedded in `ui/viewer.js` with full
+  360-degree orbit rotation, screen-space panning (right-click / 2-finger touch),
+  and distance-clamped perspective zoom (0.5m to 20m). Damping is enabled
+  (`dampingFactor = 0.05`) for smooth physical deceleration.
+
+- **Dynamic dependency resolution with offline fallback:** Automatically resolves
+  Three.js, OrbitControls, and GLTFLoader via CDN, with an integrated native WebGL
+  context fallback if the hackathon environment is air-gapped or offline.
+
+- **Studio 3-point lighting rig:** Calibrated for industrial design visualization:
+  - Key Light: Directional white light (intensity 1.2 at `[4, 6, 4]`)
+  - Fill Light: Directional cool slate light (intensity 0.6 at `[-4, 2, -2]`)
+  - Rim Light: Directional cyan accent light (intensity 0.8 at `[0, 5, -5]`)
+  - Hemisphere Light: Soft ambient illumination (`#f8fafc` sky, `#0f172a` ground)
+  - Ground Grid Helper: Slate coordinate plane (`#334155` / `#1e293b`)
+
+- **Bounding-box auto-framing:** Every loaded model is queried with `THREE.Box3`
+  to compute spatial extents and geometric center. The model is normalized to the
+  origin and the camera is smoothly repositioned to fit the frustum regardless
+  of imported scale.
+
+- **Functional binary download triggers:** Dedicated "Download .GLB" button
+  triggers client-side binary blob extraction or `GLTFExporter` binary serialization
+  (`model/gltf-binary`), providing instant offline download with visual button
+  spinner feedback.
+
+- **Parametric demo model generator:** Bundled procedural lathe vase geometry
+  allows live 360-degree rotation, wireframe toggling, and downloads immediately
+  upon page load without waiting for backend diffusion models.
+
+#### UI/UX & Design Tokens
+
+- **Neutral slate / zinc palette:** All components use Tailwind-aligned zinc/slate
+  shades (`#090d16` background, `#0f172a` cards, `#1e293b` toolbars, `#334155` borders,
+  `#94a3b8` labels, `#f8fafc` text). Flashy, distracting "vibe-coded" gradients
+  were deliberately avoided in favor of high-contrast engineering clarity.
+
+- **Responsive dual-viewport layout:** 50/50 split between input controls and
+  3D output preview ensures parity of visual weight and seamless workflow.
+
+#### Open items / handoffs for Phase 3
+
+| Item | Owner | Target phase |
+|------|-------|-------------|
+| `engine/ai_engine.py` — complete diffusion pipeline & ControlNet conditioning | Mona | Phase 3 |
+| Connect `ui/app.py` `btn_generate` output to WebGL viewer `loadGLB` | Mona + Laxmi | Phase 3 |
+| Live session state persistence | Laxmi | Phase 3 |
 
 ---
 
