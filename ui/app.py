@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import gradio as gr
 import numpy as np
@@ -49,12 +49,20 @@ SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
 SUPPORTED_UPLOAD_EXTENSIONS = [".png", ".jpg", ".jpeg"]
 _WEBGL_STUB_COLOR = "#090d16"
 
+_SESSION: Dict[str, Any] = {
+    "current_mesh": None,
+    "current_source": None,
+    "last_result": None,
+}
+
 _LAST_GENERATED_MESH: Optional[Any] = None
 
 _WEBGL_STUB_HTML = """
 <div style="width: 100%; aspect-ratio: 1 / 1; background: #090d16; border: 1px solid #334155; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-family: 'SF Mono', 'JetBrains Mono', monospace; color: #94a3b8; user-select: none;">
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2
+                 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2
+                 2 0 0 0 21 16z"/>
         <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
         <line x1="12" y1="22.08" x2="12" y2="12"/>
     </svg>
@@ -495,9 +503,13 @@ def _run_ai_generation(
 
         progress(0.85, desc="Reconstructing 3D watertight mesh...")
         _LAST_GENERATED_MESH = result.mesh
+        _SESSION["current_mesh"] = result.mesh
+        _SESSION["last_result"] = result
 
         depth_preview = None
-        if result.depth_map is not None:
+        if hasattr(result, "depth_image") and result.depth_image is not None:
+            depth_preview = result.depth_image
+        elif result.depth_map is not None:
             depth_scaled = (result.depth_map * 255.0).clip(0, 255).astype(np.uint8)
             depth_preview = Image.fromarray(depth_scaled)
         elif result.generated_image is not None:
@@ -527,10 +539,12 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
     outputs_dir.mkdir(parents=True, exist_ok=True)
     out_path = outputs_dir / f"sketch2shape_asset.{fmt}"
 
-    if _LAST_GENERATED_MESH is not None:
+    active_mesh = _LAST_GENERATED_MESH or _SESSION.get("current_mesh")
+
+    if active_mesh is not None:
         try:
-            if hasattr(_LAST_GENERATED_MESH, "export"):
-                _LAST_GENERATED_MESH.export(str(out_path), file_type=fmt)
+            if hasattr(active_mesh, "export"):
+                active_mesh.export(str(out_path), file_type=fmt)
                 return str(out_path), f"✔  Exported active mesh to {export_format.upper()}: {out_path.name}"
         except Exception as exc:
             return None, f"✘  Export failed: {exc}"
@@ -544,6 +558,9 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
 def _clear_session() -> Tuple:
     global _LAST_GENERATED_MESH
     _LAST_GENERATED_MESH = None
+    _SESSION["current_mesh"] = None
+    _SESSION["current_source"] = None
+    _SESSION["last_result"] = None
     return (
         None,
         None,

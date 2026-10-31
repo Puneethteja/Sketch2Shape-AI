@@ -222,7 +222,6 @@ class MeshReconstructor:
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
 
         # Guarantee watertight flag contract
-        watertight_mesh.is_watertight = True
 
         elapsed = round(time.perf_counter() - t0, 3)
         n_verts = len(watertight_mesh.vertices)
@@ -297,7 +296,6 @@ class MeshReconstructor:
                 vertex_colors=hull_colors,
                 process=False,
             )
-            mesh.is_watertight = True
             return mesh
         else:
             return TrimeshFallback(
