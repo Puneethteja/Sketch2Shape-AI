@@ -1147,12 +1147,22 @@ def build_ui() -> gr.Blocks:
 
                         gr.HTML('<div style="margin: 6px 0 4px; font-size: 11px; color: var(--body-text-color-subdued); text-align: center;">— or upload sketch / photo —</div>')
 
-                        file_upload = gr.File(
-                            label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
-                            file_types=SUPPORTED_UPLOAD_EXTENSIONS,
-                            file_count="single",
-                            elem_id="file-uploader",
-                        )
+                        with gr.Row(elem_id="upload-row-container"):
+                            file_upload = gr.File(
+                                label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
+                                file_types=SUPPORTED_UPLOAD_EXTENSIONS,
+                                file_count="single",
+                                elem_id="file-uploader",
+                                scale=9,
+                            )
+                            btn_remove_upload = gr.Button(
+                                "✕",
+                                variant="secondary",
+                                size="sm",
+                                elem_id="btn-remove-upload",
+                                scale=1,
+                                min_width=42,
+                            )
 
                         prompt_input = gr.Textbox(
                             label="Material / Style Prompt (Optional)",

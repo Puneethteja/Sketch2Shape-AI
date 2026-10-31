@@ -413,7 +413,10 @@ class RotationalVesselEngine:
                 vertex_colors=vertex_colors,
                 process=False,
             )
-            mesh.is_watertight = True
+            try:
+                mesh.is_watertight = True
+            except (AttributeError, TypeError):
+                pass
             return mesh
         else:
             return TrimeshFallback(
@@ -542,7 +545,10 @@ class ComponentGeometryEngine:
 
         if TRIMESH_AVAILABLE and trimesh is not None:
             mesh = trimesh.Trimesh(vertices=verts_arr, faces=faces_arr, process=False)
-            mesh.is_watertight = True
+            try:
+                mesh.is_watertight = True
+            except (AttributeError, TypeError):
+                pass
             return mesh
         return TrimeshFallback(vertices=verts_arr, faces=faces_arr, is_watertight=True)
 
@@ -617,7 +623,10 @@ class BilateralOrganicEngine:
 
         if TRIMESH_AVAILABLE and trimesh is not None:
             mesh = trimesh.Trimesh(vertices=all_verts, faces=faces, process=False)
-            mesh.is_watertight = True
+            try:
+                mesh.is_watertight = True
+            except (AttributeError, TypeError):
+                pass
             return mesh
         return TrimeshFallback(vertices=all_verts, faces=faces, is_watertight=True)
 
