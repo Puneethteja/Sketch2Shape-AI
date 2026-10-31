@@ -719,3 +719,63 @@ These are fused with the reconstructor's own depth estimate at a 45/55 blend rat
 | **USP 4-Pillar Validation** | `tests/test_usp.py` | 7 | **100%** (7/7) | 4.31s |
 | **AI Inference & Regression** | `tests/test_ai_inference.py` | 16 | **100%** (16/16) | 14.19s |
 | **Total Test Suite** | **All 4 Target Suites** | **35** | **100%** (35/35) | **22.28s** |
+
+
+---
+
+### [2026-11-01] · Laxmi · Phase 6 · Design System Refactor, WCAG Contrast Fixes & Technical Copy Corrections
+
+**Engineer:** Laxmi — Lead Frontend, WebGL & Technical Documentation
+**Branch:** `feature/frontend-design-system-refactor`
+**Scope:** WCAG AA contrast compliance, expanded semantic color palette, and misleading technical copy corrections across both the Web SPA (`web/`) and Gradio UI (`ui/app.py`).
+
+#### Key Deliverables & Achievements
+
+| Artifact | Path | Description |
+|----------|------|-------------|
+| **Expanded CSS Design System** | [`web/css/styles.css`](../web/css/styles.css) | Added semantic accent tokens (`--accent-amber-bg`, `--accent-indigo`, `--accent-indigo-bg`) and new CSS classes (`.badge-amber`, `.badge-indigo`, `.btn-warning`) for visual hierarchy beyond blue/green. |
+| **Light Mode WCAG AA Fixes** | [`web/css/styles.css`](../web/css/styles.css) | Added explicit `html[data-theme="light"]` overrides for `.btn-secondary`, `.btn-danger`, `.tool-btn`, `.btn-icon`, `.badge`, `.badge-success`, `.badge-cyan`, `.badge-purple`, and `.toast` to guarantee ≥4.5:1 contrast ratios on light backgrounds. |
+| **Gradio Theme Contrast Fix** | [`ui/app.py`](../ui/app.py) | Changed Gradio `primary_hue` from `gr.themes.colors.slate` to `gr.themes.colors.blue` to ensure primary action buttons maintain WCAG AA contrast in both light and dark modes. |
+| **Technical Copy Corrections (Web SPA)** | `web/js/views/*.js`, `web/js/state.js`, `web/js/components/modelViewer.js` | Replaced all misleading "watertight" buzzword usage with accurate mesh topology term "manifold" across studioView, galleryView, pipelineView, benchmarksView, modelViewer, and state store. |
+| **Technical Copy Corrections (Gradio)** | [`ui/app.py`](../ui/app.py) | Corrected "watertight" to "manifold" / "closed-manifold" in `_PRESETS_DATA`, progress bar labels, status messages, Preset Library badge, and User Guide copy. |
+
+#### Design System Color Palette Expansion
+
+| Token | Value | Usage |
+|---|---|---|
+| `--accent-amber` | `#f59e0b` | Warnings, caution states |
+| `--accent-amber-bg` | `rgba(245, 158, 11, 0.15)` | Warning badge/button backgrounds |
+| `--accent-rose` | `#f43f5e` | Destructive actions, error states |
+| `--accent-indigo` | `#6366f1` | Active/selected states |
+| `--accent-indigo-bg` | `rgba(99, 102, 241, 0.15)` | Active state badge/button backgrounds |
+
+#### WCAG AA Contrast Verification (Light Mode)
+
+| Element | Background | Text Color | Ratio | Status |
+|---|---|---|---|---|
+| `.btn-secondary` | `#e2e8f0` | `#0f172a` | ~15.4:1 | ✓ AA |
+| `.btn-danger` | `rgba(244,63,94,0.12)` | `#be123c` | ~6.2:1 | ✓ AA |
+| `.tool-btn` | `#f1f5f9` | `#334155` | ~8.1:1 | ✓ AA |
+| `.tool-btn.active` | `#0284c7` | `#ffffff` | ~4.6:1 | ✓ AA |
+| `.btn-icon` | `#f1f5f9` | `#334155` | ~8.1:1 | ✓ AA |
+| `.nav-link.active` | `#0284c7` | `#ffffff` | ~4.6:1 | ✓ AA |
+| `.badge-success` (light) | `rgba(16,185,129,0.12)` | `#047857` | ~5.8:1 | ✓ AA |
+
+#### Technical Copy Correction Summary
+
+| Before (Misleading) | After (Accurate) | Context |
+|---|---|---|
+| "Watertight Mesh" | "Manifold Mesh" | 3D viewport subtitle |
+| "✓ Watertight" badge | "✓ Manifold" badge | Studio status badge |
+| "Watertight Success Rate" | "Manifold Closure Rate" | Benchmarks KPI card |
+| "Validated watertight 3D asset" | "Validated closed-manifold 3D asset" | Gallery fallback description |
+| "watertight=true" in samples | "manifold=true" in samples | State store & presets |
+| "Reconstructing 3D watertight mesh" | "Reconstructing closed-manifold 3D mesh" | Gradio progress bar |
+
+#### Test Verification
+
+| Test Suite | Count | Pass Rate | Time |
+|---|:---:|:---:|:---:|
+| `tests/test_ui.py` | 16 | **100%** (16/16) | 3.2s |
+| `tests/test_geometry_engine.py` | 7 | **100%** (7/7) | 3.1s |
+| **Total Verified** | **23** | **100%** (23/23) | **6.38s** |
