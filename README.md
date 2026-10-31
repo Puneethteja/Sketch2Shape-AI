@@ -17,6 +17,11 @@ Sketch2Shape-AI/
 │   ├── __init__.py
 │   ├── preprocessing.py          # Ingest, normalize, letterbox resize, bilateral filter, lineart (Puneeth)
 │   ├── test_pipeline.py          # Stable Diffusion + ControlNet FP16 pipeline smoke test (Mona)
+│   ├── generator.py              # Sketch-guided SD 1.5 + ControlNet Scribble generation in FP16 (Mona)
+│   ├── reconstruction.py         # Pretrained 3D reconstruction backbone (InstantMesh / Unique3D) (Mona)
+│   ├── mesh_utils.py             # Watertight repair (§3.4) & multi-format serializers (Mona)
+│   ├── pipeline.py               # Unified pipeline orchestrator with sequential VRAM handover (Mona)
+│   ├── ai_engine.py              # Contract B public API facade for Gradio UI layer (Mona)
 │   ├── checkpoints/              # Checkpoint architecture & model weights (Mona)
 │   │   ├── README.md             # Checkpoint & VRAM budget specification
 │   │   ├── download_checkpoints.py # Automated HF model downloader & verifier
