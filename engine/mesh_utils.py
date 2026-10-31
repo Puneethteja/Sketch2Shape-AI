@@ -73,6 +73,33 @@ class TrimeshFallback:
     def is_watertight(self, val: bool) -> None:
         self._is_watertight = val
 
+    @property
+    def centroid(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros(3, dtype=np.float32)
+        return np.mean(self.vertices, axis=0).astype(np.float32)
+
+    @property
+    def extents(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros(3, dtype=np.float32)
+        return (np.max(self.vertices, axis=0) - np.min(self.vertices, axis=0)).astype(np.float32)
+
+    @property
+    def bounds(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros((2, 3), dtype=np.float32)
+        return np.array([np.min(self.vertices, axis=0), np.max(self.vertices, axis=0)], dtype=np.float32)
+
+    def copy(self) -> TrimeshFallback:
+        return TrimeshFallback(
+            vertices=self.vertices.copy(),
+            faces=self.faces.copy(),
+            vertex_normals=self.vertex_normals.copy() if self.vertex_normals is not None else None,
+            vertex_colors=self.vertex_colors.copy() if self.vertex_colors is not None else None,
+            is_watertight=self._is_watertight,
+        )
+
     def _compute_normals(self) -> np.ndarray:
         normals = np.zeros_like(self.vertices, dtype=np.float32)
         if len(self.faces) == 0:

@@ -13,7 +13,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-import gradio as gr
+try:
+    import gradio as gr
+except ImportError:
+    class _GrMock:
+        @staticmethod
+        def Progress(*args, **kwargs):
+            return lambda *a, **k: None
+        @staticmethod
+        def Warning(msg):
+            pass
+        @staticmethod
+        def Info(msg):
+            pass
+    gr = _GrMock()
 import numpy as np
 from PIL import Image
 
