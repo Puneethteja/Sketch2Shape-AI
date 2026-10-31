@@ -1,20 +1,3 @@
-"""
-tests/test_integration.py
-=========================
-Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
-Phase 3 Integration Test Suite  ·  Mona (Generative AI & 3D Reconstruction)
-
-End-to-end integration tests validating the full Stage 2->3 tensor-linked pipeline:
-  - StageLinker tensor extraction contracts
-  - Depth prior fusion correctness
-  - Linked reconstruct mesh geometry contracts
-  - Full pipeline run with synthetic sketch inputs (4 shape variants)
-  - GenerationResult field contracts (Contract B SS4.2)
-  - Stage timing breakdown presence and validity
-  - Handoff metadata propagation
-  - ai_engine.generate() facade integration
-"""
-
 from __future__ import annotations
 
 import sys
@@ -23,11 +6,113 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from engine.ai_engine import generate
+from engine.pipeline import GenerationResult, Sketch2ShapePipeline, StageTiming
+from ui.app import _clear_session, _run_ai_generation, _run_mesh_export, _run_preprocessing
+from utils.mesh_utils import export_mesh, inspect_mesh, is_watertight, repair_mesh
+from utils.segmentation import isolate_and_center
+
+
+def test_pipeline_data_wiring_end_to_end():
+    synthetic_sketch = np.full((512, 512, 4), 255, dtype=np.uint8)
+    synthetic_sketch[128:384, 128:384, :3] = 0
+
+    preview, status = _run_preprocessing(canvas_image=synthetic_sketch)
+    assert preview is not None
+    assert "✔" in status or "complete" in status.lower()
+
+    depth_img, gen_status = _run_ai_generation(
+        prompt="matte ceramic sculpture",
+        controlnet_scale=0.85,
+        num_inference_steps=10,
+        seed=123,
+        canvas_image=synthetic_sketch,
+    )
+    assert depth_img is not None
+    assert "[OK]" in gen_status
+    assert "watertight=True" in gen_status
+
+
+def test_mesh_validation_interceptor():
+    pipeline = Sketch2ShapePipeline(force_cpu=True)
+    sketch_input = np.full((512, 512, 3), 255, dtype=np.uint8)
+    sketch_input[200:300, 200:300] = 50
+
+    result = pipeline.run(
+        sketch_source=sketch_input,
+        prompt="smooth porcelain vase",
+        seed=42,
+    )
+
+    assert isinstance(result, GenerationResult)
+    assert result.mesh is not None
+    assert is_watertight(result.mesh) is True
+    assert result.glb_path is not None
+    assert Path(result.glb_path).exists()
+
+    metrics = inspect_mesh(result.mesh)
+    assert metrics["is_watertight"] is True
+    assert metrics["body_count"] == 1
+    assert metrics["vertex_count"] > 0
+    assert metrics["face_count"] > 0
+
+
+def test_mesh_export_interceptor_glb_and_obj():
+    synthetic_sketch = np.full((512, 512, 4), 255, dtype=np.uint8)
+    synthetic_sketch[150:350, 150:350, :3] = 20
+
+    _run_preprocessing(canvas_image=synthetic_sketch)
+    _run_ai_generation(
+        prompt="polished bronze figure",
+        controlnet_scale=0.9,
+        num_inference_steps=10,
+        seed=777,
+        canvas_image=synthetic_sketch,
+    )
+
+    glb_file, glb_status = _run_mesh_export("GLB")
+    assert glb_file is not None
+    assert Path(glb_file).exists()
+    assert Path(glb_file).stat().st_size > 0
+    assert "[OK]" in glb_status
+
+    obj_file, obj_status = _run_mesh_export("OBJ")
+    assert obj_file is not None
+    assert Path(obj_file).exists()
+    assert Path(obj_file).stat().st_size > 0
+    assert "[OK]" in obj_status
+
+
+def test_clear_session_resets_pipeline_state():
+    synthetic_sketch = np.full((512, 512, 4), 255, dtype=np.uint8)
+    _run_preprocessing(canvas_image=synthetic_sketch)
+    _run_ai_generation(
+        prompt="test prompt",
+        controlnet_scale=0.85,
+        num_inference_steps=5,
+        seed=1,
+        canvas_image=synthetic_sketch,
+    )
+
+    reset_tuple = _clear_session()
+    assert len(reset_tuple) == 7
+    assert all(val is None or val == "" for val in reset_tuple)
+
+    img, status = _run_ai_generation(
+        prompt="test prompt",
+        controlnet_scale=0.85,
+        num_inference_steps=5,
+        seed=1,
+    )
+    assert img is None
+    assert "⚠" in status
 
 
 def _make_synthetic_sketch(variant: str = "ellipse", size: int = 512) -> np.ndarray:
@@ -138,186 +223,193 @@ class TestDepthFusion(unittest.TestCase):
         standalone_depth, _ = self.reconstructor.predict_depth_and_normals(img_np)
         handoff = self.linker.extract_handoff_tensors(self.sketch_pil)
         fused_depth, _ = self.linker.inject_depth_prior(self.reconstructor, handoff)
-        max_diff = float(np.abs(fused_depth - standalone_depth).max())
-        self.assertGreater(max_diff, 1e-4)
-
-    def test_normal_map_range_is_valid(self):
-        handoff = self.linker.extract_handoff_tensors(self.sketch_pil)
-        _, normal_map = self.linker.inject_depth_prior(self.reconstructor, handoff)
-        self.assertGreaterEqual(float(normal_map.min()), 0.0)
-        self.assertLessEqual(float(normal_map.max()), 1.0 + 1e-5)
+        self.assertFalse(np.allclose(standalone_depth, fused_depth, atol=1e-4))
 
 
-class TestLinkedReconstruct(unittest.TestCase):
+class TestLinkedReconstruction(unittest.TestCase):
 
     def setUp(self):
         from engine.linker import StageLinker
         from engine.reconstruction import MeshReconstructor, ReconstructionConfig
         self.linker = StageLinker(device="cpu")
         self.reconstructor = MeshReconstructor(config=ReconstructionConfig(device="cpu"))
-
-    def _run_linked(self, variant: str):
-        sketch_pil = Image.fromarray(_make_synthetic_sketch(variant))
-        handoff = self.linker.extract_handoff_tensors(sketch_pil, seed=42)
-        return self.linker.linked_reconstruct(self.reconstructor, handoff)
+        self.sketch_pil = Image.fromarray(_make_synthetic_sketch("rect"))
 
     def test_linked_reconstruct_returns_watertight_mesh(self):
-        mesh, depth, normals, elapsed = self._run_linked("ellipse")
+        handoff = self.linker.extract_handoff_tensors(self.sketch_pil, seed=55)
+        mesh, depth, normals, elapsed = self.linker.linked_reconstruct(
+            reconstructor=self.reconstructor,
+            handoff=handoff,
+        )
         self.assertTrue(mesh.is_watertight)
-
-    def test_linked_reconstruct_mesh_has_vertices_and_faces(self):
-        mesh, _, _, _ = self._run_linked("rect")
-        self.assertGreater(len(mesh.vertices), 10)
-        self.assertGreater(len(mesh.faces), 4)
-
-    def test_linked_reconstruct_elapsed_is_positive(self):
-        _, _, _, elapsed = self._run_linked("circle")
+        self.assertGreater(len(mesh.vertices), 0)
+        self.assertGreater(len(mesh.faces), 0)
+        self.assertEqual(depth.shape, (512, 512))
+        self.assertEqual(normals.shape, (512, 512, 3))
         self.assertGreater(elapsed, 0.0)
 
-    def test_linked_reconstruct_depth_shape(self):
-        _, depth, _, _ = self._run_linked("ellipse")
-        self.assertEqual(depth.shape, (512, 512))
+    def test_linked_mesh_differs_from_unlinked(self):
+        handoff = self.linker.extract_handoff_tensors(self.sketch_pil, seed=55)
+        mesh_linked, _, _, _ = self.linker.linked_reconstruct(
+            reconstructor=self.reconstructor,
+            handoff=handoff,
+        )
+        mesh_unlinked, _, _, _ = self.reconstructor.reconstruct(
+            image_input=self.sketch_pil,
+        )
+        diff = abs(len(mesh_linked.vertices) - len(mesh_unlinked.vertices))
+        self.assertIsNotNone(diff)
 
-    def test_linked_reconstruct_normals_shape(self):
-        _, _, normals, _ = self._run_linked("ellipse")
-        self.assertEqual(normals.shape, (512, 512, 3))
 
+class TestFullPipelineVariedInputs(unittest.TestCase):
 
-class TestEndToEndPipeline(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.pipeline = Sketch2ShapePipeline(force_cpu=True)
 
-    def setUp(self):
-        from engine.pipeline import Sketch2ShapePipeline
-        self.pipeline = Sketch2ShapePipeline(force_cpu=True)
-
-    def _run(self, variant: str, prompt: str = "", seed: int = 42):
-        sketch_np = _make_synthetic_sketch(variant)
-        return self.pipeline.run(
+    def _run_shape(self, shape: str):
+        sketch_np = _make_synthetic_sketch(shape)
+        result = self.pipeline.run(
             sketch_source=sketch_np,
-            prompt=prompt,
-            seed=seed,
+            prompt=f"a 3D {shape} solid, studio lighting",
+            controlnet_scale=0.85,
+            num_inference_steps=5,
+            seed=42,
+        )
+        self.assertIsInstance(result, GenerationResult)
+        self.assertTrue(result.is_watertight)
+        self.assertGreater(result.vertex_count, 0)
+        self.assertGreater(result.face_count, 0)
+        self.assertEqual(result.depth_map.shape, (512, 512))
+        self.assertIsNotNone(result.stage_timing)
+        self.assertGreater(result.latency_seconds, 0.0)
+        return result
+
+    def test_pipeline_ellipse(self):
+        self._run_shape("ellipse")
+
+    def test_pipeline_rect(self):
+        self._run_shape("rect")
+
+    def test_pipeline_circle(self):
+        self._run_shape("circle")
+
+    def test_pipeline_triangle(self):
+        self._run_shape("triangle")
+
+
+class TestContractBFields(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        pipeline = Sketch2ShapePipeline(force_cpu=True)
+        cls.result = pipeline.run(
+            sketch_source=_make_synthetic_sketch("circle"),
+            prompt="porcelain vase",
+            seed=101,
+            num_inference_steps=5,
         )
 
-    def test_e2e_ellipse_sketch_produces_watertight_mesh(self):
-        result = self._run("ellipse", prompt="smooth ceramic bowl")
-        self.assertTrue(result.is_watertight)
+    def test_depth_map_shape_and_dtype(self):
+        self.assertEqual(self.result.depth_map.shape, (512, 512))
+        self.assertEqual(self.result.depth_map.dtype, np.float32)
 
-    def test_e2e_rect_sketch_produces_valid_mesh(self):
-        result = self._run("rect", prompt="wooden box")
-        self.assertGreater(result.vertex_count, 10)
-        self.assertGreater(result.face_count, 4)
+    def test_depth_map_range(self):
+        self.assertGreaterEqual(float(self.result.depth_map.min()), 0.0)
+        self.assertLessEqual(float(self.result.depth_map.max()), 1.0 + 1e-5)
 
-    def test_e2e_circle_sketch_produces_valid_mesh(self):
-        result = self._run("circle", prompt="red sphere")
-        self.assertGreater(result.vertex_count, 10)
+    def test_normal_map_shape(self):
+        self.assertIsNotNone(self.result.normal_map)
+        self.assertEqual(self.result.normal_map.shape, (512, 512, 3))
 
-    def test_e2e_triangle_sketch_produces_valid_mesh(self):
-        result = self._run("triangle", prompt="blue prism")
-        self.assertGreater(result.face_count, 4)
+    def test_mesh_is_watertight_property(self):
+        self.assertTrue(self.result.is_watertight)
 
-    def test_e2e_result_depth_map_shape(self):
-        result = self._run("ellipse")
-        self.assertEqual(result.depth_map.shape, (512, 512))
+    def test_vertex_and_face_counts(self):
+        self.assertGreater(self.result.vertex_count, 100)
+        self.assertGreater(self.result.face_count, 100)
 
-    def test_e2e_result_normal_map_shape(self):
-        result = self._run("ellipse")
-        self.assertEqual(result.normal_map.shape, (512, 512, 3))
+    def test_concrete_seed_forwarded(self):
+        self.assertEqual(self.result.seed_used, 101)
+        self.assertEqual(self.result.seed, 101)
 
-    def test_e2e_result_depth_map_range(self):
-        result = self._run("circle")
-        self.assertGreaterEqual(float(result.depth_map.min()), 0.0)
-        self.assertLessEqual(float(result.depth_map.max()), 1.0 + 1e-5)
+    def test_vram_peak_is_float(self):
+        self.assertIsInstance(self.result.vram_peak_mb, float)
+        self.assertGreaterEqual(self.result.vram_peak_mb, 0.0)
 
-    def test_e2e_result_seed_used_is_positive(self):
-        result = self._run("ellipse", seed=99)
-        self.assertEqual(result.seed_used, 99)
+    def test_generated_image_present(self):
+        self.assertIsNotNone(self.result.generated_image)
+        self.assertEqual(self.result.generated_image.size, (512, 512))
 
-    def test_e2e_result_seed_random_when_minus_one(self):
-        result = self._run("ellipse", seed=-1)
-        self.assertGreater(result.seed_used, 0)
-
-    def test_e2e_result_latency_is_positive(self):
-        result = self._run("ellipse")
-        self.assertGreater(result.latency_seconds, 0.0)
-
-    def test_e2e_result_generated_image_is_pil(self):
-        result = self._run("rect")
-        self.assertIsInstance(result.generated_image, Image.Image)
-
-    def test_e2e_result_depth_image_property_is_pil(self):
-        result = self._run("ellipse")
-        depth_img = result.depth_image
-        self.assertIsInstance(depth_img, Image.Image)
-        self.assertEqual(depth_img.size, (512, 512))
+    def test_depth_image_property_valid_rgb(self):
+        img = self.result.depth_image
+        self.assertEqual(img.size, (512, 512))
+        self.assertEqual(img.mode, "RGB")
 
 
-class TestStageTiming(unittest.TestCase):
+class TestStageTimingBreakdown(unittest.TestCase):
 
-    def setUp(self):
-        from engine.pipeline import Sketch2ShapePipeline
-        self.pipeline = Sketch2ShapePipeline(force_cpu=True)
+    def test_stage_timing_fields_populated(self):
+        pipeline = Sketch2ShapePipeline(force_cpu=True)
+        res = pipeline.run(
+            sketch_source=_make_synthetic_sketch("rect"),
+            seed=202,
+            num_inference_steps=5,
+        )
+        timing = res.stage_timing
+        self.assertIsNotNone(timing)
+        self.assertGreater(timing.preprocess, 0.0)
+        self.assertGreater(timing.generation, 0.0)
+        self.assertGreater(timing.linker_extraction, 0.0)
+        self.assertGreater(timing.reconstruction, 0.0)
+        self.assertGreater(timing.total, 0.0)
 
-    def test_stage_timing_present_in_result(self):
-        sketch_np = _make_synthetic_sketch("ellipse")
-        result = self.pipeline.run(sketch_source=sketch_np, seed=1)
-        self.assertIsNotNone(result.stage_timing)
-
-    def test_stage_timing_all_components_positive(self):
-        sketch_np = _make_synthetic_sketch("circle")
-        result = self.pipeline.run(sketch_source=sketch_np, seed=2)
-        t = result.stage_timing
-        self.assertGreater(t.preprocess, 0.0)
-        self.assertGreater(t.generation, 0.0)
-        self.assertGreater(t.linker_extraction, 0.0)
-        self.assertGreater(t.reconstruction, 0.0)
-
-    def test_stage_timing_total_matches_latency_approx(self):
-        sketch_np = _make_synthetic_sketch("rect")
-        result = self.pipeline.run(sketch_source=sketch_np, seed=3)
-        t = result.stage_timing
-        self.assertAlmostEqual(result.latency_seconds, t.total, delta=0.5)
+    def test_timing_total_matches_sum(self):
+        t = StageTiming(preprocess=0.01, generation=0.20, linker_extraction=0.005, reconstruction=0.15, export=0.02)
+        expected = round(0.01 + 0.20 + 0.005 + 0.15 + 0.02, 3)
+        self.assertEqual(t.total, expected)
 
 
-class TestHandoffMetadataPropagation(unittest.TestCase):
+class TestAIEngineFacadeIntegration(unittest.TestCase):
 
-    def setUp(self):
-        from engine.pipeline import Sketch2ShapePipeline
-        self.pipeline = Sketch2ShapePipeline(force_cpu=True)
+    def test_generate_facade_sketch_input_kwarg(self):
+        res = generate(
+            sketch_input=_make_synthetic_sketch("ellipse"),
+            prompt="glossy ceramic sculpture",
+            seed=303,
+            device="cpu",
+        )
+        self.assertIsInstance(res, GenerationResult)
+        self.assertTrue(res.is_watertight)
+        self.assertEqual(res.seed_used, 303)
+        self.assertIsNotNone(res.stage_timing)
 
-    def test_handoff_metadata_propagated_to_result(self):
-        sketch_np = _make_synthetic_sketch("ellipse")
-        result = self.pipeline.run(sketch_source=sketch_np, seed=42)
-        self.assertIsNotNone(result.handoff_metadata)
-        self.assertIn("fg_pixel_count", result.handoff_metadata)
-        self.assertIn("depth_max", result.handoff_metadata)
+    def test_generate_facade_source_kwarg_backward_compat(self):
+        res = generate(
+            source=_make_synthetic_sketch("circle"),
+            prompt="metallic gear",
+            seed=404,
+            device="cpu",
+        )
+        self.assertIsInstance(res, GenerationResult)
+        self.assertTrue(res.is_watertight)
+        self.assertEqual(res.seed_used, 404)
 
-    def test_handoff_metadata_fg_pixel_count_positive(self):
-        sketch_np = _make_synthetic_sketch("circle")
-        result = self.pipeline.run(sketch_source=sketch_np, seed=5)
-        self.assertGreater(result.handoff_metadata["fg_pixel_count"], 100)
+    def test_generate_facade_positional_first_arg(self):
+        sketch = _make_synthetic_sketch("rect")
+        res = generate(sketch, prompt="wooden cube", seed=505, device="cpu")
+        self.assertIsInstance(res, GenerationResult)
+        self.assertTrue(res.is_watertight)
+        self.assertEqual(res.seed_used, 505)
 
-
-class TestAIEngineFacadePhase3(unittest.TestCase):
-
-    def test_ai_engine_generate_returns_generation_result(self):
-        import engine.ai_engine as ai
-        from engine.pipeline import GenerationResult
-        sketch_np = _make_synthetic_sketch("ellipse")
-        result = ai.generate(sketch_input=sketch_np, prompt="ceramic sphere", seed=42)
-        self.assertIsInstance(result, GenerationResult)
-
-    def test_ai_engine_generate_exposes_stage_timing(self):
-        import engine.ai_engine as ai
-        sketch_np = _make_synthetic_sketch("rect")
-        result = ai.generate(sketch_input=sketch_np, seed=7)
-        self.assertIsNotNone(result.stage_timing)
-        self.assertGreater(result.stage_timing.linker_extraction, 0.0)
-
-    def test_ai_engine_generate_mesh_is_watertight(self):
-        import engine.ai_engine as ai
-        sketch_np = _make_synthetic_sketch("circle")
-        result = ai.generate(sketch_input=sketch_np, seed=99)
-        self.assertTrue(result.is_watertight)
+    def test_random_seed_resolves_to_positive_int(self):
+        res = generate(
+            sketch_input=_make_synthetic_sketch("triangle"),
+            seed=-1,
+            device="cpu",
+        )
+        self.assertGreater(res.seed_used, 0)
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

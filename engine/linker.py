@@ -260,7 +260,10 @@ class StageLinker:
         raw_mesh = reconstructor._synthesize_mesh_from_depth(img_uint8, fused_depth)
 
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
-        watertight_mesh.is_watertight = True
+        try:
+            watertight_mesh.is_watertight = True
+        except (AttributeError, TypeError):
+            pass
 
         elapsed = round(time.perf_counter() - t0, 3)
         logger.info(

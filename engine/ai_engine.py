@@ -2,11 +2,7 @@
 engine/ai_engine.py
 ===================
 Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
-Lead Engineer : Mona (Generative AI & 3D Reconstruction)
-
-Public API interface for Contract B connecting AI Engine with the Gradio UI layer (ui/app.py).
-Conforms strictly to Technical Architecture Specification SS4.2.
-Phase 3: Exposes stage_timing, handoff_metadata, is_watertight, vertex_count, face_count.
+Public API interface for Contract B connecting AI Engine with the Gradio UI layer.
 """
 
 from __future__ import annotations
@@ -30,7 +26,6 @@ _GLOBAL_PIPELINE: Optional[Sketch2ShapePipeline] = None
 
 
 def get_pipeline(device: Optional[str] = None) -> Sketch2ShapePipeline:
-    """Returns or initializes the global singleton pipeline instance."""
     global _GLOBAL_PIPELINE
     if _GLOBAL_PIPELINE is None:
         _GLOBAL_PIPELINE = Sketch2ShapePipeline(device=device)
@@ -46,34 +41,6 @@ def generate(
     device: Optional[str] = None,
     source: Any = None,
 ) -> GenerationResult:
-    """
-    Contract B Producer Function (SS4.2).
-    Generates a 3D asset from an input sketch and returns a GenerationResult.
-
-    Parameters:
-        sketch_input: Preprocessed lineart tensor, PIL.Image, or NumPy array.
-        prompt: Optional text description for materials and styling.
-        controlnet_scale: ControlNet conditioning weight (calibrated 0.7 - 0.95).
-        num_inference_steps: Diffusion denoising steps (default: 30).
-        seed: RNG seed for reproducible generation (-1 = random).
-        device: Target execution device ('cuda' or 'cpu').
-
-    Returns:
-        GenerationResult with fields:
-            depth_map        : (512, 512) float32 [0, 1]
-            normal_map       : (512, 512, 3) float32 [0, 1]
-            mesh             : watertight trimesh.Trimesh
-            seed_used        : concrete integer seed
-            vram_peak_mb     : peak VRAM in MB
-            generated_image  : PIL.Image 2.5D render
-            latency_seconds  : total pipeline wall-clock time
-            stage_timing     : StageTiming breakdown per stage
-            handoff_metadata : linker extraction metrics dict
-            is_watertight    : bool (property)
-            vertex_count     : int (property)
-            face_count       : int (property)
-            depth_image      : PIL.Image grayscale depth preview (property)
-    """
     pipeline = get_pipeline(device=device)
     resolved_input = sketch_input if sketch_input is not None else source
     return pipeline.run(
