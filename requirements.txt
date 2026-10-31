@@ -23,10 +23,11 @@ torchaudio>=2.1.0
 # ── Computer Vision & Image Processing ──────────────────────────────────────
 opencv-python>=4.8.0
 Pillow>=10.0.0
-numpy>=1.24.0,<2.0.0
+numpy>=1.24.0
 
 # ── Background Removal ───────────────────────────────────────────────────────
 rembg>=2.0.50
+onnxruntime>=1.16.0
 
 # ── 3-D Geometry ─────────────────────────────────────────────────────────────
 trimesh>=4.0.0
