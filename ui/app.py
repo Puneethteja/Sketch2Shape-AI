@@ -64,7 +64,7 @@ logger = logging.getLogger("sketch2shape.ui")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 APP_TITLE   = "Sketch2Shape AI"
-APP_VERSION = "0.2.0-phase2"
+APP_VERSION = "0.3.0-phase3"
 
 # Supported sketch export formats
 SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
@@ -632,7 +632,6 @@ def _run_preprocessing(
     """
     source: Optional[Union[np.ndarray, str]] = None
 
-    # Priority: 1. Gradio canvas ndarray, 2. Uploaded file, 3. HTML5 canvas data-url
     if canvas_image is not None:
         logger.info("UI: Using canvas drawing (ndarray) as source")
         source = canvas_image
@@ -654,9 +653,11 @@ def _run_preprocessing(
     try:
         result_np: np.ndarray = preprocess(source, return_tensor=False)
         preview = Image.fromarray(result_np)
+        _SESSION["current_source"] = source
+        _SESSION["preprocessed_source"] = preview
         logger.info("UI: Preprocessing complete — shape %s", result_np.shape)
         return preview, "✔  Preprocessing complete. Ready for AI generation."
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("UI: Preprocessing error: %s", exc, exc_info=True)
         return None, f"✘  Preprocessing failed: {exc}"
 
@@ -666,75 +667,110 @@ def _run_ai_generation(
     controlnet_scale: float,
     num_inference_steps: int,
     seed: int,
+    canvas_image: Optional[np.ndarray] = None,
+    uploaded_file: Optional[str] = None,
+    canvas_data_url: Optional[str] = None,
 ) -> Tuple[Optional[Image.Image], str]:
-    """
-    Stage 2 handler: invoke Mona's AI engine to produce a depth/normal map.
-    """
-    logger.info(
-        "UI: AI generation requested — prompt=%r  scale=%.2f  steps=%d  seed=%d",
-        prompt, controlnet_scale, num_inference_steps, seed,
-    )
     if not _AI_ENGINE_AVAILABLE:
         return None, "[!] AI engine unavailable. Ensure engine/ai_engine.py is importable."
+
+    source_candidate: Optional[Union[np.ndarray, str, Image.Image]] = None
+    if canvas_image is not None:
+        source_candidate = canvas_image
+    elif uploaded_file is not None:
+        source_candidate = uploaded_file
+    elif canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
+        source_candidate = canvas_data_url
+
+    if source_candidate is None:
+        return None, "⚠ No sketch input provided. Draw on the canvas or upload a sketch first."
+
     try:
-        sketch = np.zeros((512, 512, 3), dtype=np.uint8)
+        concrete_seed = int(seed) if seed is not None and seed != -1 else -1
         result = _ai_engine.generate(
-            sketch_input=sketch,
+            source=source_candidate,
             prompt=prompt,
-            controlnet_scale=controlnet_scale,
+            controlnet_scale=float(controlnet_scale),
             num_inference_steps=int(num_inference_steps),
-            seed=int(seed) if seed != -1 else None,
+            seed=concrete_seed,
         )
-        _SESSION["current_mesh"] = result.mesh
+
+        from utils.mesh_utils import export_mesh, repair_mesh
+        validated_mesh = repair_mesh(
+            result.mesh,
+            strip_floating=True,
+            fill_holes=True,
+            center_and_scale=True,
+        )
+        _SESSION["current_mesh"] = validated_mesh
         _SESSION["last_result"] = result
-        depth_img = result.depth_image
+
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        preview_glb = outputs_dir / f"preview_{result.seed_used}.glb"
+        export_mesh(validated_mesh, preview_glb, export_format="glb")
+        _SESSION["current_glb"] = str(preview_glb.resolve())
+
+        depth_vis: Optional[Image.Image] = None
+        if result.depth_map is not None:
+            depth_arr = result.depth_map
+            if depth_arr.dtype != np.uint8:
+                depth_vis_arr = (depth_arr * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                depth_vis_arr = depth_arr
+            depth_vis = Image.fromarray(depth_vis_arr)
+        elif result.generated_image is not None:
+            depth_vis = result.generated_image
+
         status = (
-            f"[OK] Generation complete — seed={result.seed} "
-            f"latency={result.elapsed_total:.2f}s "
-            f"watertight={result.is_watertight}"
+            f"[OK] Generation complete — seed={result.seed_used} "
+            f"latency={result.latency_seconds:.2f}s "
+            f"watertight={validated_mesh.is_watertight}"
         )
         logger.info("UI: %s", status)
-        return depth_img, status
-    except Exception as exc:  # noqa: BLE001
+        return depth_vis, status
+    except Exception as exc:
         logger.error("UI: AI generation error: %s", exc, exc_info=True)
         return None, f"[ERR] AI generation failed: {exc}"
 
 
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
-    """
-    Stage 3 handler: serialise the current in-memory mesh to the chosen format.
-    """
     logger.info("UI: Mesh export requested — format=%s", export_format)
     mesh = _SESSION.get("current_mesh")
     if mesh is None:
         return None, "[!] No mesh in session. Run AI generation first."
     try:
+        from utils.mesh_utils import export_mesh
         ext_map = {"OBJ": ".obj", "GLB": ".glb", "STL": ".stl", "PLY": ".ply"}
         ext = ext_map.get(export_format.upper(), ".obj")
         tmp = tempfile.NamedTemporaryFile(
             delete=False, suffix=ext, prefix="sketch2shape_",
         )
         tmp.close()
-        mesh.export(tmp.name, file_type=export_format.lower())
-        status = f"[OK] Exported {export_format} mesh to {tmp.name}"
+        out_path = export_mesh(mesh, tmp.name, export_format=export_format.lower())
+        status = f"[OK] Exported {export_format} mesh to {out_path}"
         logger.info("UI: %s", status)
-        return tmp.name, status
-    except Exception as exc:  # noqa: BLE001
+        return str(out_path), status
+    except Exception as exc:
         logger.error("UI: Mesh export error: %s", exc, exc_info=True)
         return None, f"[ERR] Mesh export failed: {exc}"
 
 
 def _clear_session() -> Tuple:
-    """Reset all interactive components to their initial states (exact 7-tuple)."""
     logger.info("UI: Session cleared by user")
+    _SESSION["current_mesh"] = None
+    _SESSION["current_source"] = None
+    _SESSION["preprocessed_source"] = None
+    _SESSION["last_result"] = None
+    _SESSION["current_glb"] = None
     return (
-        None,   # canvas
-        None,   # file uploader
-        "",     # prompt
-        None,   # preprocessed preview
-        None,   # depth preview
-        None,   # export file
-        "",     # status
+        None,
+        None,
+        "",
+        None,
+        None,
+        None,
+        "",
     )
 
 
@@ -976,7 +1012,7 @@ def build_ui() -> gr.Blocks:
 
         btn_generate.click(
             fn=_run_ai_generation,
-            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input],
+            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input, canvas, file_upload, canvas_data_holder],
             outputs=[depth_view, status_bar],
         )
 

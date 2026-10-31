@@ -1,20 +1,6 @@
 """
 engine/pipeline.py
-==================
-Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
-Lead Engineer : Mona (Generative AI & 3D Reconstruction)
-
-Unified end-to-end inference pipeline orchestrator with strict FP16 execution
-and sequential VRAM memory handover to eliminate Out-Of-Memory (OOM) risks
-on 16GB VRAM GPUs (NVIDIA T4 / V100) and consumer cards.
-
-Sequential Execution Flow:
-1. Ingest sketch input and normalize to 512x512 lineart tensor (Puneeth, Contract A).
-2. Initialize SketchDiffusionGenerator in FP16 -> Generate 2.5D asset (~5.2 GB peak).
-3. Sequential Handover: Evacuate generator weights & clear CUDA cache (0 GB active).
-4. Initialize MeshReconstructor in FP16 -> Predict depth, normals, & 3D mesh (~6.5 GB peak).
-5. Deterministic watertight repair sequence (§3.4).
-6. Return GenerationResult (Contract B) and optionally export to OBJ/GLB/STL/PLY.
+Unified end-to-end inference pipeline orchestrator.
 """
 
 from __future__ import annotations
@@ -29,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-# Reconfigure stdout to utf-8 if supported to prevent Windows charmap encoding errors
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -39,14 +24,14 @@ if hasattr(sys.stdout, "reconfigure"):
 import numpy as np
 from PIL import Image
 
-# Ensure project root is in sys.path for direct CLI execution
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.generator import DiffusionConfig, SketchDiffusionGenerator
-from engine.mesh_utils import repair_mesh
 from engine.reconstruction import MeshReconstructor, ReconstructionConfig
+from utils.mesh_utils import export_mesh, repair_mesh
+from utils.segmentation import isolate_and_center
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,31 +41,19 @@ logging.basicConfig(
 logger = logging.getLogger("sketch2shape.pipeline")
 
 
-# ── Contract B Dataclass Definition (§4.2) ───────────────────────────────────
-
 @dataclass
 class GenerationResult:
-    """
-    Return type for engine.pipeline and engine.ai_engine.generate().
-    All fields are on CPU and ready for UI consumption. Conforms to §4.2.
-    """
-    depth_map: np.ndarray               # shape (512, 512), float32, range [0, 1]
-    normal_map: Optional[np.ndarray]    # shape (512, 512, 3), float32, range [0, 1]
-    mesh: Any                           # watertight trimesh.Trimesh after §3.4 repair
-    seed_used: int                      # actual concrete seed (never -1)
-    vram_peak_mb: float                 # peak VRAM during inference in MB
-    generated_image: Optional[Image.Image] = None  # 2.5D diffusion output
-    latency_seconds: float = 0.0        # total pipeline latency in seconds
+    depth_map: np.ndarray
+    normal_map: Optional[np.ndarray]
+    mesh: Any
+    seed_used: int
+    vram_peak_mb: float
+    generated_image: Optional[Image.Image] = None
+    latency_seconds: float = 0.0
+    glb_path: Optional[str] = None
 
-
-# ── Unified Pipeline Orchestrator ────────────────────────────────────────────
 
 class Sketch2ShapePipeline:
-    """
-    End-to-end pipeline executing sketch-guided generation followed by
-    3D mesh reconstruction with strict sequential VRAM management.
-    """
-
     def __init__(
         self,
         device: Optional[str] = None,
@@ -101,7 +74,6 @@ class Sketch2ShapePipeline:
         return "cpu"
 
     def _get_peak_vram_mb(self) -> float:
-        """Reads peak CUDA memory allocated in MB."""
         try:
             import torch
             if torch.cuda.is_available() and self.device.startswith("cuda"):
@@ -111,7 +83,6 @@ class Sketch2ShapePipeline:
         return 0.0
 
     def _reset_vram_peak(self) -> None:
-        """Resets CUDA peak memory tracking."""
         try:
             import torch
             if torch.cuda.is_available():
@@ -130,19 +101,6 @@ class Sketch2ShapePipeline:
         export_path: Optional[Union[str, Path]] = None,
         export_format: str = "obj",
     ) -> GenerationResult:
-        """
-        Executes end-to-end generation from 2D sketch to textured watertight 3D mesh.
-
-        Parameters:
-            sketch_source: File path, PIL.Image, NumPy array, or bytes.
-            prompt: Optional text description for materials, styling, colors.
-            controlnet_scale: ControlNet conditioning weight (calibrated 0.7 - 0.95).
-            num_inference_steps: Diffusion denoising steps (default: 30).
-            guidance_scale: Classifier-free guidance (default: 7.5).
-            seed: RNG seed for reproducible generation (-1 for random).
-            export_path: Optional output path to auto-export mesh file.
-            export_format: Mesh format ('obj', 'glb', 'stl', 'ply').
-        """
         pipeline_t0 = time.perf_counter()
         self._reset_vram_peak()
 
@@ -151,12 +109,10 @@ class Sketch2ShapePipeline:
         logger.info(f"Target Device: {self.device} | FP16 Execution: {self.device.startswith('cuda')}")
         logger.info("=" * 70)
 
-        # ── Stage 1: Universal Preprocessing ─────────────────────────────────
         stage1_t0 = time.perf_counter()
         preprocessed_img = self._preprocess_input(sketch_source)
         logger.info(f"[Stage 1] Preprocessing completed in {time.perf_counter() - stage1_t0:.3f}s")
 
-        # ── Stage 2: Sketch-Guided Diffusion Generation (FP16) ───────────────
         stage2_t0 = time.perf_counter()
         logger.info("[Stage 2] Initializing Diffusion Generator in FP16...")
 
@@ -178,7 +134,6 @@ class Sketch2ShapePipeline:
         )
         logger.info(f"[Stage 2] Diffusion pass completed in {gen_elapsed:.2f}s | Seed: {concrete_seed}")
 
-        # ── Sequential Handover: Evacuate Generator from VRAM ────────────────
         logger.info("[Sequential Handover] Evacuating Stage 2 model weights from VRAM...")
         generator.unload()
         del generator
@@ -192,7 +147,12 @@ class Sketch2ShapePipeline:
         except Exception:
             pass
 
-        # ── Stage 3: Pretrained 3D Mesh Reconstruction (FP16) ────────────────
+        try:
+            segmented_gen_image = isolate_and_center(gen_image, neutral_background=True)
+        except Exception as exc:
+            logger.warning(f"Foreground segmentation fallback: {exc}")
+            segmented_gen_image = gen_image
+
         stage3_t0 = time.perf_counter()
         logger.info("[Stage 3] Initializing 3D Reconstruction Backbone in FP16...")
 
@@ -201,29 +161,52 @@ class Sketch2ShapePipeline:
         )
         reconstructor = MeshReconstructor(config=recon_config)
 
-        watertight_mesh, depth_map, normal_map, recon_elapsed = reconstructor.reconstruct(
-            image_input=gen_image,
+        raw_mesh, depth_map, normal_map, recon_elapsed = reconstructor.reconstruct(
+            image_input=segmented_gen_image,
         )
         logger.info(
             f"[Stage 3] 3D Reconstruction completed in {recon_elapsed:.2f}s | "
-            f"Vertices: {len(watertight_mesh.vertices)} | Faces: {len(watertight_mesh.faces)} | "
-            f"Watertight: {watertight_mesh.is_watertight}"
+            f"Vertices: {len(raw_mesh.vertices)} | Faces: {len(raw_mesh.faces)}"
         )
 
-        # Evacuate Reconstructor from VRAM
         reconstructor.unload()
         del reconstructor
         gc.collect()
 
+        logger.info("[Stage 4] Intercepting mesh with non-manifold repair sequence...")
+        try:
+            watertight_mesh = repair_mesh(
+                raw_mesh,
+                strip_floating=True,
+                fill_holes=True,
+                center_and_scale=True,
+            )
+        except Exception as exc:
+            logger.warning(f"Mesh repair interceptor warning ({exc}); using reconstructed mesh")
+            watertight_mesh = raw_mesh
+
         total_elapsed = round(time.perf_counter() - pipeline_t0, 3)
         peak_vram = self._get_peak_vram_mb()
 
-        # ── Stage 4: Optional Serialization & Export ─────────────────────────
+        glb_path_exported: Optional[str] = None
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        default_glb = outputs_dir / f"generated_mesh_{concrete_seed}.glb"
+        try:
+            export_mesh(watertight_mesh, default_glb, export_format="glb")
+            glb_path_exported = str(default_glb.resolve())
+            logger.info(f"[Stage 5] Serialized clean binary GLB to {default_glb}")
+        except Exception as exc:
+            logger.warning(f"Default GLB export warning: {exc}")
+
         if export_path is not None:
             out_file = Path(export_path)
             out_file.parent.mkdir(parents=True, exist_ok=True)
-            watertight_mesh.export(str(out_file), file_type=export_format)
-            logger.info(f"[Stage 4] Exported 3D asset to {out_file} (format={export_format.upper()})")
+            try:
+                export_mesh(watertight_mesh, out_file, export_format=export_format)
+            except Exception:
+                watertight_mesh.export(str(out_file), file_type=export_format)
+            logger.info(f"[Stage 5] Exported 3D asset to {out_file} (format={export_format.upper()})")
 
         logger.info("=" * 70)
         logger.info(
@@ -240,16 +223,12 @@ class Sketch2ShapePipeline:
             vram_peak_mb=peak_vram,
             generated_image=gen_image,
             latency_seconds=total_elapsed,
+            glb_path=glb_path_exported,
         )
 
     def _preprocess_input(self, source: Any) -> Image.Image:
-        """
-        Integrates Puneeth's engine.preprocessing pipeline if available,
-        falling back to PIL normalisation if unimported.
-        """
         try:
             from engine.preprocessing import preprocess
-            # Ingest and letterbox resize to 512x512
             preprocessed_np = preprocess(source, return_tensor=False)
             return Image.fromarray(preprocessed_np)
         except Exception as exc:
@@ -276,8 +255,6 @@ class Sketch2ShapePipeline:
             img = img.resize((512, 512), Image.Resampling.BILINEAR)
         return img
 
-
-# ── CLI Entrypoint ───────────────────────────────────────────────────────────
 
 def main() -> int:
     parser = argparse.ArgumentParser(
