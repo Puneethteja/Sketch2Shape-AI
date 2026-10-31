@@ -52,6 +52,7 @@
             this.isAutoRotating = this.options.autoRotate;
             this.isWireframe = this.options.wireframe;
             this.gridVisible = this.options.showGrid;
+            this.isFullscreen = false;
 
             this.scene = null;
             this.camera = null;
@@ -60,17 +61,20 @@
             this.modelGroup = null;
             this.gridHelper = null;
             this.animationFrameId = null;
+            this.resizeObserver = null;
 
             this.dom = {
                 wrapper: null,
                 viewport: null,
                 spinnerOverlay: null,
                 spinnerBar: null,
+                spinnerPercent: null,
                 spinnerText: null,
                 toolbar: null,
                 downloadBtn: null,
                 downloadSpinner: null,
                 statBadge: null,
+                fullscreenBtn: null,
             };
 
             if (this.options.autoInit) {
@@ -129,21 +133,25 @@
 
             const viewport = document.createElement("div");
             viewport.className = "s2s-viewport-canvas-host";
-            viewport.style.cssText = "position:relative;flex:1;width:100%;min-height:340px;cursor:grab;outline:none;overflow:hidden;";
+            viewport.style.cssText = "position:relative;flex:1;width:100%;min-height:340px;cursor:grab;outline:none;overflow:hidden;touch-action:none;";
             this.container.appendChild(viewport);
             this.dom.viewport = viewport;
 
             const spinnerOverlay = document.createElement("div");
             spinnerOverlay.className = "s2s-spinner-overlay";
-            spinnerOverlay.style.cssText = "position:absolute;inset:0;background:rgba(9, 13, 22, 0.88);backdrop-filter:blur(4px);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:50;color:" + THEME.textPrimary + ";font-size:12px;font-family:monospace;user-select:none;";
-            spinnerOverlay.innerHTML = '<div class="s2s-spinner-ring" style="width:40px;height:40px;border:3px solid ' + THEME.border + ';border-top-color:' + THEME.accent + ';border-radius:50%;animation:s2s-spin 0.8s linear infinite;"></div>' +
+            spinnerOverlay.style.cssText = "position:absolute;inset:0;background:rgba(9, 13, 22, 0.90);backdrop-filter:blur(6px);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:50;color:" + THEME.textPrimary + ";font-size:12px;font-family:monospace;user-select:none;";
+            spinnerOverlay.innerHTML = '<div class="s2s-spinner-ring" style="width:42px;height:42px;border:3px solid ' + THEME.border + ';border-top-color:' + THEME.accent + ';border-radius:50%;animation:s2s-spin 0.8s linear infinite;"></div>' +
                 '<div id="s2s-spinner-text" style="letter-spacing:0.05em;color:' + THEME.textMuted + ';font-weight:500;">Generating 3D Asset via AI Engine...</div>' +
-                '<div style="width:180px;height:3px;background:' + THEME.border + ';border-radius:2px;overflow:hidden;">' +
-                '<div id="s2s-spinner-bar" style="width:0%;height:100%;background:' + THEME.accent + ';transition:width 0.2s ease;"></div>' +
+                '<div style="width:200px;display:flex;flex-direction:column;gap:4px;align-items:center;">' +
+                '<div style="width:100%;height:4px;background:' + THEME.border + ';border-radius:2px;overflow:hidden;">' +
+                '<div id="s2s-spinner-bar" style="width:0%;height:100%;background:' + THEME.accent + ';transition:width 0.25s ease;"></div>' +
+                '</div>' +
+                '<span id="s2s-spinner-percent" style="font-size:10px;color:' + THEME.textDark + ';font-family:monospace;">0%</span>' +
                 '</div>';
             viewport.appendChild(spinnerOverlay);
             this.dom.spinnerOverlay = spinnerOverlay;
             this.dom.spinnerBar = spinnerOverlay.querySelector("#s2s-spinner-bar");
+            this.dom.spinnerPercent = spinnerOverlay.querySelector("#s2s-spinner-percent");
             this.dom.spinnerText = spinnerOverlay.querySelector("#s2s-spinner-text");
 
             if (!document.getElementById("s2s-viewer-styles")) {
@@ -164,12 +172,19 @@
             const controlsGroup = document.createElement("div");
             controlsGroup.style.cssText = "display:flex;align-items:center;gap:6px;";
 
-            const resetBtn = document.createElement("button");
-            resetBtn.className = "s2s-btn";
-            resetBtn.title = "Reset 360 Camera View";
-            resetBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Reset';
-            resetBtn.addEventListener("click", () => this.resetCamera());
-            controlsGroup.appendChild(resetBtn);
+            const resetCameraBtn = document.createElement("button");
+            resetCameraBtn.className = "s2s-btn";
+            resetCameraBtn.title = "Reset 360 Camera View";
+            resetCameraBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Camera';
+            resetCameraBtn.addEventListener("click", () => this.resetCamera());
+            controlsGroup.appendChild(resetCameraBtn);
+
+            const resetAssetBtn = document.createElement("button");
+            resetAssetBtn.className = "s2s-btn";
+            resetAssetBtn.title = "Reset Asset to Default View";
+            resetAssetBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg> Reset Asset';
+            resetAssetBtn.addEventListener("click", () => this.resetAsset());
+            controlsGroup.appendChild(resetAssetBtn);
 
             const autoRotateBtn = document.createElement("button");
             autoRotateBtn.className = "s2s-btn " + (this.isAutoRotating ? "active" : "");
@@ -202,6 +217,14 @@
                 gridBtn.classList.toggle("active", this.gridVisible);
             });
             controlsGroup.appendChild(gridBtn);
+
+            const fullscreenBtn = document.createElement("button");
+            fullscreenBtn.className = "s2s-btn";
+            fullscreenBtn.title = "Toggle Fullscreen Viewport";
+            fullscreenBtn.innerHTML = '<svg id="s2s-fs-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg> Fullscreen';
+            fullscreenBtn.addEventListener("click", () => this.toggleFullscreen());
+            controlsGroup.appendChild(fullscreenBtn);
+            this.dom.fullscreenBtn = fullscreenBtn;
 
             toolbar.appendChild(controlsGroup);
 
@@ -289,8 +312,8 @@
 
         _initThreeScene() {
             const THREE = window.THREE;
-            const width = this.dom.viewport.clientWidth || 400;
-            const height = this.dom.viewport.clientHeight || 340;
+            const width = Math.max(this.dom.viewport.clientWidth || 400, 200);
+            const height = Math.max(this.dom.viewport.clientHeight || 340, 200);
 
             this.scene = new THREE.Scene();
             this.scene.background = new THREE.Color(THEME.bg);
@@ -372,15 +395,43 @@
         }
 
         _bindWindowEvents() {
-            window.addEventListener("resize", () => {
+            const handleResize = () => {
                 if (!this.dom.viewport || !this.camera || !this.renderer) return;
-                const width = this.dom.viewport.clientWidth;
-                const height = this.dom.viewport.clientHeight;
-                if (width === 0 || height === 0) return;
+                const width = Math.max(this.dom.viewport.clientWidth, 100);
+                const height = Math.max(this.dom.viewport.clientHeight, 100);
                 this.camera.aspect = width / height;
                 this.camera.updateProjectionMatrix();
                 this.renderer.setSize(width, height);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            };
+
+            window.addEventListener("resize", handleResize);
+
+            if (typeof ResizeObserver !== "undefined") {
+                this.resizeObserver = new ResizeObserver(() => handleResize());
+                if (this.container) this.resizeObserver.observe(this.container);
+                if (this.dom.viewport) this.resizeObserver.observe(this.dom.viewport);
+            }
+
+            document.addEventListener("fullscreenchange", () => {
+                this.isFullscreen = !!document.fullscreenElement;
+                if (this.dom.fullscreenBtn) {
+                    this.dom.fullscreenBtn.classList.toggle("active", this.isFullscreen);
+                }
+                setTimeout(handleResize, 100);
             });
+        }
+
+        toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                if (this.container.requestFullscreen) {
+                    this.container.requestFullscreen().catch(() => {});
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                }
+            }
         }
 
         resetCamera() {
@@ -388,6 +439,20 @@
             this.camera.position.set(0, 1.5, 3.2);
             this.controls.target.set(0, 0.5, 0);
             this.controls.update();
+        }
+
+        resetAsset() {
+            this._clearModelGroup();
+            this.activeModel = null;
+            this.activeBlob = null;
+            this.activeBlobUrl = null;
+            this.lastLoadedUrl = null;
+            this.resetCamera();
+            this.loadParametricDemo("vase");
+            if (this.dom.statBadge) {
+                this.dom.statBadge.textContent = "Asset Reset";
+                this.dom.statBadge.style.color = THEME.textDark;
+            }
         }
 
         setWireframe(enabled) {
@@ -409,13 +474,19 @@
             if (this.dom.spinnerOverlay) {
                 this.dom.spinnerOverlay.style.display = "flex";
                 if (this.dom.spinnerText) this.dom.spinnerText.textContent = message;
-                if (this.dom.spinnerBar) this.dom.spinnerBar.style.width = Math.min(100, Math.max(0, progress)) + "%";
+                const pct = Math.min(100, Math.max(0, Math.round(progress)));
+                if (this.dom.spinnerBar) this.dom.spinnerBar.style.width = pct + "%";
+                if (this.dom.spinnerPercent) this.dom.spinnerPercent.textContent = pct + "%";
             }
         }
 
         updateLoadingProgress(progress, message) {
+            const pct = Math.min(100, Math.max(0, Math.round(progress)));
             if (this.dom.spinnerBar) {
-                this.dom.spinnerBar.style.width = Math.min(100, Math.max(0, progress)) + "%";
+                this.dom.spinnerBar.style.width = pct + "%";
+            }
+            if (this.dom.spinnerPercent) {
+                this.dom.spinnerPercent.textContent = pct + "%";
             }
             if (message && this.dom.spinnerText) {
                 this.dom.spinnerText.textContent = message;
@@ -686,6 +757,9 @@
             }
             if (this.controls) {
                 this.controls.dispose();
+            }
+            if (this.resizeObserver) {
+                this.resizeObserver.disconnect();
             }
             this._clearModelGroup();
             if (this.renderer) {
