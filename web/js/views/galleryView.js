@@ -72,7 +72,7 @@ export function createGalleryView() {
             ${samples.map((item) => `
               <div class="gallery-card" data-id="${item.id}" data-category="${item.category}">
                 <div class="gallery-thumb-wrap">
-                  <img src="${item.sketchPath}" alt="${item.title}" onerror="this.src='assets/samples/sample_01_vase/input_sketch.png'">
+                  <img src="${item.previewImage || item.sketchPath}" alt="${item.title || item.name}" onerror="this.src='${item.sketchPath || "assets/samples/sample_01_vase/input_sketch.png"}'">
                   <span class="badge badge-subtle gallery-card-badge">${item.category}</span>
                 </div>
                 <div class="gallery-card-body">
@@ -156,13 +156,21 @@ export function createGalleryView() {
                     </div>
                   </div>
 
-                  <!-- Download Actions -->
-                  <div class="modal-actions-bar">
-                    <button id="btn-modal-download-obj" class="btn btn-secondary btn-sm" style="flex: 1;">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                      <span>Download OBJ</span>
-                    </button>
-                    <button id="btn-modal-open-studio" class="btn btn-primary btn-sm" style="flex: 1;">
+                  <!-- Download Actions: 4 Formats (STL, OBJ, GLB, PLY) -->
+                  <div class="modal-actions-bar" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <a id="btn-modal-download-stl" class="btn btn-secondary btn-sm" style="flex: 1; min-width: 80px;" download>
+                      <span>STL</span>
+                    </a>
+                    <a id="btn-modal-download-obj" class="btn btn-secondary btn-sm" style="flex: 1; min-width: 80px;" download>
+                      <span>OBJ</span>
+                    </a>
+                    <a id="btn-modal-download-glb" class="btn btn-secondary btn-sm" style="flex: 1; min-width: 80px;" download>
+                      <span>GLB</span>
+                    </a>
+                    <a id="btn-modal-download-ply" class="btn btn-secondary btn-sm" style="flex: 1; min-width: 80px;" download>
+                      <span>PLY</span>
+                    </a>
+                    <button id="btn-modal-open-studio" class="btn btn-primary btn-sm" style="flex: 2; min-width: 140px;">
                       <span>Open in Studio</span>
                     </button>
                   </div>
@@ -241,6 +249,30 @@ export function createGalleryView() {
           } else {
             modalViewer.loadProceduralShape(sample.shapeType || "vase");
           }
+        }
+
+        // Configure 4-Format Download Links
+        const btnStl = document.getElementById("btn-modal-download-stl");
+        const btnObj = document.getElementById("btn-modal-download-obj");
+        const btnGlb = document.getElementById("btn-modal-download-glb");
+        const btnPly = document.getElementById("btn-modal-download-ply");
+
+        const baseFilename = (sample.title || sample.name || "trellis_model").replace(/\s+/g, "_");
+        if (btnStl) {
+          btnStl.href = sample.stlPath || sample.stl_url || (sample.glbPath ? sample.glbPath.replace(/\.glb$/, ".stl") : "#");
+          btnStl.setAttribute("download", `${baseFilename}.stl`);
+        }
+        if (btnObj) {
+          btnObj.href = sample.objPath || sample.obj_url || (sample.glbPath ? sample.glbPath.replace(/\.glb$/, ".obj") : "#");
+          btnObj.setAttribute("download", `${baseFilename}.obj`);
+        }
+        if (btnGlb) {
+          btnGlb.href = sample.glbPath || sample.glb_url || "#";
+          btnGlb.setAttribute("download", `${baseFilename}.glb`);
+        }
+        if (btnPly) {
+          btnPly.href = sample.plyPath || sample.ply_url || (sample.glbPath ? sample.glbPath.replace(/\.glb$/, ".ply") : "#");
+          btnPly.setAttribute("download", `${baseFilename}.ply`);
         }
       };
 

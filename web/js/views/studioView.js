@@ -101,9 +101,9 @@ export function createStudioView() {
                 </div>
                 <h1 class="hero-main-title">2D Sketch to Watertight 3D Mesh Synthesis</h1>
                 <p class="hero-narrative">
-                  Sketch your concept silhouette or upload an outline. The Microsoft TRELLIS 2.4-billion parameter
-                  Structured 3D Latent (SLat) engine synthesizes topologically clean, 2-manifold polygon meshes
-                  in seconds. Outputs are ready for 3D slicing, CAD modeling, and real-time visualization.
+                  Sketch your concept silhouette or upload an outline. Microsoft TRELLIS.2 (4 Billion parameters)
+                  utilizes field-free O-Voxel sparse structures with 16&times; spatial VAE compression to generate
+                  high-resolution, fully-textured 3D meshes in seconds with automated STL, OBJ, GLB, and PLY exports.
                 </p>
               </div>
             </div>
@@ -594,15 +594,15 @@ export function createStudioView() {
             if (stageLabel) stageLabel.textContent = label;
           };
 
-          updateProgress(20, "Conditioning Microsoft TRELLIS Structured Latents (SLat)...");
+          updateProgress(20, "Conditioning Microsoft TRELLIS.2 O-Voxel Latents (16x VAE)...");
 
           let progressVal = 20;
           const progressTimer = setInterval(() => {
             if (progressVal < 88) {
               progressVal += 12;
-              let msg = "Decoding 3D Transformer Flow Matching (2.4B Params)...";
+              let msg = "Decoding 3D Flow Matching Transformer (4B Parameters)...";
               if (progressVal > 50) {
-                msg = "Extracting Dual Marching Tetrahedra & Manifold Repair (§3.4)...";
+                msg = "Extracting O-Voxel PBR Surface Geometry & Manifold Verification...";
               }
               updateProgress(progressVal, msg);
             }

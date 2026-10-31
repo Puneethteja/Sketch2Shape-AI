@@ -26,7 +26,7 @@ export function renderNavbar() {
           </div>
           <div class="brand-info">
             <span class="brand-name">Sketch2Shape</span>
-            <span class="brand-engine-tag">TRELLIS 2-4B</span>
+            <span class="brand-engine-tag">TRELLIS.2-4B</span>
           </div>
         </a>
       </div>

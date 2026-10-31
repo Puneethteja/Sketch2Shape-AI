@@ -808,7 +808,7 @@ def _resolve_input_source(
 ) -> Optional[Union[np.ndarray, str, Image.Image]]:
     if uploaded_file is not None:
         file_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
-        if len(str(file_path).strip()) > 0 and Path(file_path).exists():
+        if len(str(file_path).strip()) > 0:
             return str(file_path)
 
     extracted_canvas = _extract_image_from_source(canvas_image)
