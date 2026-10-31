@@ -22,9 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sketch2shape.check_gpu")
 
-# Minimum recommended VRAM in gigabytes for running SD1.5 + ControlNet in FP16
 MIN_RECOMMENDED_VRAM_GB: float = 6.0
-
 
 def check_cuda_availability() -> Tuple[bool, str]:
     """
@@ -49,7 +47,6 @@ def check_cuda_availability() -> Tuple[bool, str]:
 
     device_count = torch.cuda.device_count()
     return True, f"CUDA available with {device_count} device(s). PyTorch version: {torch.__version__}."
-
 
 def get_gpu_info(device_idx: int = 0) -> Dict[str, Any]:
     """
@@ -100,7 +97,6 @@ def get_gpu_info(device_idx: int = 0) -> Dict[str, Any]:
         "meets_min_vram": total_gb >= MIN_RECOMMENDED_VRAM_GB,
     }
 
-
 def check_fp16_support(device_idx: int = 0) -> Tuple[bool, str]:
     """
     Validate that FP16 half-precision tensor execution functions properly on the device.
@@ -116,7 +112,7 @@ def check_fp16_support(device_idx: int = 0) -> Tuple[bool, str]:
         return False, "PyTorch is not installed."
 
     if not torch.cuda.is_available():
-        # Test CPU half-precision simulation
+
         try:
             x = torch.randn(4, 4, dtype=torch.float16)
             y = x @ x
@@ -135,7 +131,6 @@ def check_fp16_support(device_idx: int = 0) -> Tuple[bool, str]:
         return True, "FP16 half-precision computation verified successfully on GPU."
     except Exception as exc:
         return False, f"FP16 computation failed on GPU: {exc}"
-
 
 def run_gpu_diagnostic() -> Dict[str, Any]:
     """
@@ -161,7 +156,6 @@ def run_gpu_diagnostic() -> Dict[str, Any]:
         "production_ready": is_ready_for_production,
     }
     return report
-
 
 def print_diagnostic_report() -> None:
     """Print a clean CLI summary of the hardware verification."""
@@ -197,7 +191,6 @@ def print_diagnostic_report() -> None:
     else:
         print("[NOTICE] Running in CPU/Fallback mode. GPU acceleration recommended for hackathon demo.")
     print("=" * 65)
-
 
 if __name__ == "__main__":
     print_diagnostic_report()
