@@ -14,7 +14,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
-import gradio as gr
+try:
+    import gradio as gr
+except ImportError:
+    class _GrMock:
+        @staticmethod
+        def Progress(*args, **kwargs):
+            return lambda *a, **k: None
+        @staticmethod
+        def Warning(msg):
+            pass
+        @staticmethod
+        def Info(msg):
+            pass
+    gr = _GrMock()
 import numpy as np
 from PIL import Image
 
@@ -896,6 +909,13 @@ def _run_ai_generation(
         gr.Warning(f"Generation interrupted: {exc}")
         return GenerationOutput(None, None, f"✘  Generation failed: {exc}", "")
 
+def _clear_uploaded_file() -> Tuple[Optional[str], Optional[Image.Image], str]:
+    global _LAST_GENERATED_MESH
+    if _SESSION.get("current_source") is not None and not isinstance(_SESSION.get("current_source"), np.ndarray):
+        _SESSION["current_source"] = None
+    logger.info("Uploaded file removed and session state cleared.")
+    return None, None, "✔  Uploaded file removed. You can upload a new sketch or draw on canvas."
+
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
     global _LAST_GENERATED_MESH
 
@@ -908,24 +928,32 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
 
     if active_mesh is not None:
         try:
+            if hasattr(active_mesh, "export"):
+                active_mesh.export(str(out_path), file_type=fmt)
+                gr.Info(f"Exported {export_format.upper()} asset.")
+                return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
             from utils.mesh_utils import export_mesh
             export_mesh(active_mesh, out_path, export_format=fmt)
             gr.Info(f"Exported {export_format.upper()} asset.")
             return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
         except Exception as exc:
-            try:
-                if hasattr(active_mesh, "export"):
-                    active_mesh.export(str(out_path), file_type=fmt)
-                    return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
-            except Exception:
-                pass
             gr.Warning(f"Export error: {exc}")
             return None, f"✘  Export failed: {exc}"
 
     glb_file = outputs_dir / "sketch2shape_generated.glb"
-    if glb_file.exists() and fmt == "glb":
-        gr.Info("Exported GLB asset.")
-        return str(glb_file), f"[OK] Exported {glb_file.name}"
+    if glb_file.exists():
+        if fmt == "glb":
+            gr.Info("Exported GLB asset.")
+            return str(glb_file), f"[OK] Exported {glb_file.name}"
+        elif fmt == "stl":
+            try:
+                from utils.mesh_utils import load_mesh, export_mesh
+                loaded = load_mesh(glb_file)
+                export_mesh(loaded, out_path, export_format="stl")
+                gr.Info("Exported STL asset.")
+                return str(out_path), f"[OK] Exported active GLB asset to STL: {out_path.name}"
+            except Exception:
+                pass
 
     gr.Info("No active mesh in session. Generate a 3D asset first.")
     return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
@@ -1317,6 +1345,18 @@ def build_ui() -> gr.Blocks:
             elem_classes=["status-bar"],
             lines=1,
             max_lines=2,
+        )
+
+        btn_remove_upload.click(
+            fn=_clear_uploaded_file,
+            inputs=[],
+            outputs=[file_upload, preprocessed_view, status_bar],
+        )
+
+        file_upload.clear(
+            fn=_clear_uploaded_file,
+            inputs=[],
+            outputs=[file_upload, preprocessed_view, status_bar],
         )
 
         btn_preprocess.click(

@@ -233,6 +233,7 @@ class Sketch2ShapePipeline:
             seed=concrete_seed,
             gen_elapsed=gen_elapsed,
             prompt=prompt or "",
+            original_sketch=preprocessed_img,
         )
         timing.linker_extraction = round(time.perf_counter() - linker_t0, 4)
         logger.info(
