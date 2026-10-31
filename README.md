@@ -9,33 +9,35 @@
 
 ```
 Sketch2Shape-AI/
-├── check_gpu.py              # GPU, VRAM & FP16 precision verification script (Mona)
-├── engine/                   # Core ML & CV pipeline
+├── check_gpu.py                  # GPU, VRAM & FP16 precision verification script (Mona)
+├── docs/                         # Technical documentation & engineering logs
+│   ├── technical_architecture.md # System dataflow, algorithmic specs, integration contracts (Laxmi)
+│   └── living_log.md             # Chronological development milestone log (Team)
+├── engine/                       # Core ML & CV pipeline
 │   ├── __init__.py
-│   ├── preprocessing.py      # Ingest, normalize, letterbox resize, bilateral filter, lineart (Puneeth)
-│   ├── test_pipeline.py      # Stable Diffusion + ControlNet FP16 pipeline smoke test (Mona)
-│   ├── checkpoints/          # Checkpoint architecture & model weights (Mona)
-│   │   ├── README.md         # Checkpoint & VRAM budget specification
+│   ├── preprocessing.py          # Ingest, normalize, letterbox resize, bilateral filter, lineart (Puneeth)
+│   ├── test_pipeline.py          # Stable Diffusion + ControlNet FP16 pipeline smoke test (Mona)
+│   ├── checkpoints/              # Checkpoint architecture & model weights (Mona)
+│   │   ├── README.md             # Checkpoint & VRAM budget specification
 │   │   ├── download_checkpoints.py # Automated HF model downloader & verifier
-│   │   ├── stable_diffusion/ # Stable Diffusion v1.5 weights
-│   │   ├── controlnet/       # ControlNet adapters (scribble / canny)
-│   │   └── reconstruction_3d/# 3D backbones (InstantMesh / Unique3D)
-│   └── README.md             # Engine subsystem documentation
-├── docs/                     # Hackathon documentation & engineering logs
-│   └── living_log.md         # Sprint logs & engineering decisions
-├── ui/                       # Front-end / drawing canvas interface
+│   │   ├── stable_diffusion/     # Stable Diffusion v1.5 weights
+│   │   ├── controlnet/           # ControlNet adapters (scribble / canny)
+│   │   └── reconstruction_3d/    # 3D backbones (InstantMesh / Unique3D)
+│   └── README.md                 # Engine subsystem documentation
+├── ui/                           # Front-end / drawing canvas interface
+│   ├── app.py                    # Gradio dual-viewport UI skeleton (Laxmi)
 │   └── .gitkeep
-├── outputs/                  # Generated images & 3-D assets
+├── outputs/                      # Generated images & 3-D assets
 │   └── .gitkeep
-├── tests/                    # pytest test suite
+├── tests/                        # pytest test suite
 │   ├── __init__.py
-│   ├── test_preprocessing.py # Ingest, color normalisation, resize, filter, lineart
-│   └── test_image_utils.py   # Image I/O and visualization helpers
-├── utils/                    # Shared helper utilities
+│   ├── test_preprocessing.py     # Ingest, color normalisation, resize, filter, lineart
+│   └── test_image_utils.py       # Image I/O and visualization helpers
+├── utils/                        # Shared helper utilities
 │   ├── __init__.py
-│   └── image_utils.py        # I/O, PIL conversion, side-by-side display, mask overlay
-├── environment.yml           # Conda environment spec (CUDA-enabled PyTorch)
-├── requirements.txt          # pip requirements specification
+│   └── image_utils.py            # I/O, PIL conversion, side-by-side display, mask overlay
+├── environment.yml               # Conda environment spec (CUDA-enabled PyTorch)
+├── requirements.txt              # pip requirements specification
 └── .gitignore
 ```
 
@@ -124,6 +126,7 @@ All 49 unit and integration tests validate:
 |---|---|
 | Lead Data & Infrastructure Engineer | Puneeth |
 | Lead Generative AI & 3D Reconstruction Engineer | Mona |
+| Lead Frontend, WebGL & Technical Documentation | Laxmi |
 
 ---
 
