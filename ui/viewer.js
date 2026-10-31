@@ -18,7 +18,9 @@
         textPrimary: "#f8fafc",
         textMuted: "#94a3b8",
         textDark: "#64748b",
-        accent: "#38bdf8",
+        accent: "#7d2ae8",
+        accentCyan: "#00c4cc",
+        canvaGradient: "linear-gradient(135deg, #7d2ae8, #00c4cc)",
         gridLine: "#1e293b",
         gridCenter: "#334155",
     };

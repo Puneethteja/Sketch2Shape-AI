@@ -603,7 +603,7 @@ def _run_ai_generation(
         )
 
         progress(0.85, desc="Reconstructing 3D watertight mesh...")
-        from utils.mesh_utils import repair_mesh
+        from engine.mesh_utils import repair_mesh
         validated_mesh = repair_mesh(
             result.mesh,
             strip_floating=True,
@@ -682,7 +682,7 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
                 active_mesh.export(str(out_path), file_type=fmt)
                 gr.Info(f"Exported {export_format.upper()} asset.")
                 return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
-            from utils.mesh_utils import export_mesh
+            from engine.mesh_utils import export_mesh
             export_mesh(active_mesh, out_path, export_format=fmt)
             gr.Info(f"Exported {export_format.upper()} asset.")
             return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
@@ -697,7 +697,7 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
             return str(glb_file), f"[OK] Exported {glb_file.name}"
         elif fmt == "stl":
             try:
-                from utils.mesh_utils import load_mesh, export_mesh
+                from engine.mesh_utils import load_mesh, export_mesh
                 loaded = load_mesh(glb_file)
                 export_mesh(loaded, out_path, export_format="stl")
                 gr.Info("Exported STL asset.")
@@ -755,7 +755,7 @@ def _run_component_edit(
         return None, "⚠ No active 3D model in session. Generate a 3D asset first.", ""
     try:
         updated_mesh = ComponentEditor.apply_edit(mesh, component_name, material_name, custom_color)
-        from utils.mesh_utils import repair_mesh, export_mesh
+        from engine.mesh_utils import repair_mesh, export_mesh
         try:
             validated_mesh = repair_mesh(updated_mesh, strip_floating=False, fill_holes=True, center_and_scale=False)
         except Exception:
@@ -845,6 +845,77 @@ def _clear_session() -> Tuple:
         "",
     )
 
+
+# ── Canva 3D Studio Elements & Material Presets ──────────────────────────────
+
+CANVA_PRESET_ELEMENTS = {
+    "vase": {
+        "name": "Ceramic Vase",
+        "icon": "🏺",
+        "sketch": "outputs/samples/sample_01_vase/input_sketch.png",
+        "prompt": "smooth porcelain ceramic vase with bulbous body, narrow neck, and flared rim, studio lighting, photorealistic, 8k",
+    },
+    "mug": {
+        "name": "Nordic Mug",
+        "icon": "☕",
+        "sketch": "outputs/samples/sample_02_mug/input_sketch.png",
+        "prompt": "modern minimalist ceramic coffee mug with solid cylindrical handle, clean matte porcelain glaze, 8k",
+    },
+    "chair": {
+        "name": "Lounge Chair",
+        "icon": "🪑",
+        "sketch": "outputs/samples/sample_03_chair/input_sketch.png",
+        "prompt": "minimalist Scandinavian geometric wooden chair with ergonomic curved backrest, natural oak finish, 8k",
+    },
+    "bottle": {
+        "name": "Water Bottle",
+        "icon": "🍶",
+        "sketch": "outputs/samples/sample_04_bottle/input_sketch.png",
+        "prompt": "tall stainless steel reusable insulated water bottle with screw cap, brushed metallic finish, 8k",
+    },
+    "bowl": {
+        "name": "Zen Bowl",
+        "icon": "🥣",
+        "sketch": "outputs/samples/sample_05_bowl/input_sketch.png",
+        "prompt": "deep hand-carved polished wooden artisanal salad bowl with rounded smooth contour, organic walnut, 8k",
+    },
+}
+
+CANVA_MATERIAL_PRESETS = {
+    "porcelain": ("🏺 Porcelain", "smooth glossy white porcelain ceramic with delicate glaze"),
+    "gold": ("🪙 Brushed Gold", "luxurious brushed 24k gold metal with warm specular sheen"),
+    "titanium": ("⚙️ Titanium", "aerospace-grade matte brushed titanium alloy with satin reflections"),
+    "walnut": ("🪵 Walnut Wood", "hand-rubbed organic polished walnut wood with natural grain"),
+    "terracotta": ("🧱 Terracotta", "matte artisanal baked terracotta clay with earthy texture"),
+    "glass": ("🧊 Frosted Glass", "translucent frosted glass with soft subsurface scattering"),
+    "obsidian": ("🌌 Obsidian", "glossy volcanic black obsidian with mirror reflections"),
+    "coral": ("🍬 Pastel Coral", "smooth satin pastel coral polymer clay"),
+}
+
+def _load_canva_element(element_key: str):
+    elem = CANVA_PRESET_ELEMENTS.get(element_key)
+    if not elem:
+        return None, "", "Element not found"
+    sketch_path = _ROOT / elem["sketch"]
+    if sketch_path.exists():
+        img = Image.open(sketch_path).convert("RGB")
+        _SESSION["current_source"] = img
+        status = f"✨ Canva Element loaded: '{elem['name']}'. Click '✨ Magic 3D Generate' to synthesize."
+        gr.Info(f"Loaded Canva {elem['name']} template!")
+        return img, elem["prompt"], status
+    return None, elem["prompt"], f"Sketch file not found at {sketch_path}"
+
+def _apply_canva_material(material_key: str, current_prompt: str):
+    _, desc = CANVA_MATERIAL_PRESETS.get(material_key, ("", ""))
+    if not desc:
+        return current_prompt or ""
+    base = (current_prompt or "").strip()
+    if not base:
+        return desc
+    if desc in base:
+        return base
+    return f"{base}, {desc}"
+
 def build_ui() -> gr.Blocks:
     with gr.Blocks(
         title=APP_TITLE,
@@ -855,24 +926,73 @@ def build_ui() -> gr.Blocks:
             font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
         ),
         css="""
-        .gradio-container { max-width: 1440px !important; margin: 0 auto; }
+        .gradio-container { max-width: 1440px !important; margin: 0 auto; font-family: 'Inter', system-ui, sans-serif !important; }
         .panel-header {
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--body-text-color-subdued);
+            color: #94a3b8;
             padding-bottom: 4px;
-            border-bottom: 1px solid var(--border-color-primary);
+            border-bottom: 1px solid rgba(125, 42, 232, 0.25);
             margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .canva-elements-row button {
+            background: #1e293b !important;
+            border: 1px solid #334155 !important;
+            color: #e2e8f0 !important;
+            font-size: 11px !important;
+            font-weight: 500 !important;
+            border-radius: 6px !important;
+            padding: 4px 6px !important;
+            transition: all 0.2s ease !important;
+        }
+        .canva-elements-row button:hover {
+            border-color: #7d2ae8 !important;
+            background: rgba(125, 42, 232, 0.2) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 10px rgba(125, 42, 232, 0.35) !important;
+        }
+        .canva-materials-row button {
+            background: rgba(30, 41, 59, 0.6) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            color: #94a3b8 !important;
+            font-size: 11px !important;
+            padding: 3px 6px !important;
+            border-radius: 12px !important;
+            transition: all 0.2s ease !important;
+        }
+        .canva-materials-row button:hover {
+            border-color: #00c4cc !important;
+            background: rgba(0, 196, 204, 0.2) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 8px rgba(0, 196, 204, 0.3) !important;
+        }
+        #btn-magic-generate {
+            background: linear-gradient(135deg, #7d2ae8 0%, #00c4cc 100%) !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            border: none !important;
+            border-radius: 6px !important;
+            box-shadow: 0 4px 14px rgba(125, 42, 232, 0.4) !important;
+            transition: all 0.2s ease !important;
+        }
+        #btn-magic-generate:hover {
+            box-shadow: 0 6px 20px rgba(125, 42, 232, 0.65) !important;
+            transform: translateY(-1px);
         }
         .compact-accordion .label-wrap { padding: 6px 10px !important; }
         .status-bar textarea {
             font-family: var(--font-mono) !important;
             font-size: 12px !important;
-            color: var(--body-text-color-subdued) !important;
-            background: transparent !important;
-            border: none !important;
+            color: #94a3b8 !important;
+            background: rgba(15, 23, 42, 0.6) !important;
+            border: 1px solid #1e293b !important;
+            border-radius: 6px !important;
             resize: none !important;
         }
         .export-row button { font-size: 12px !important; }
@@ -880,7 +1000,7 @@ def build_ui() -> gr.Blocks:
             .gradio-container { padding: 8px !important; }
             div#s2s-canvas-component { padding: 6px !important; }
         }
-        """,
+""",
     ) as app:
 
         canvas_data_holder = gr.Textbox(
@@ -896,13 +1016,29 @@ def build_ui() -> gr.Blocks:
         )
 
         with gr.Row(elem_classes=["header-row"]):
-            gr.Markdown(
-                f"""
-                <h2>{APP_TITLE}</h2>
-                Sketch → Diffusion → 3D Mesh &nbsp;·&nbsp;
-                TechZephyr 4.0 · IIT Bhubaneswar &nbsp;·&nbsp;
-                `v{APP_VERSION}`
-                """,
+            gr.HTML(
+                f'''
+                <div style="background: linear-gradient(135deg, rgba(125,42,232,0.18) 0%, rgba(0,196,204,0.14) 100%); border: 1px solid rgba(125,42,232,0.35); border-radius: 12px; padding: 14px 18px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 4px 20px rgba(125,42,232,0.12);">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #7d2ae8, #00c4cc); display: flex; align-items: center; justify-content: center; font-size: 20px; box-shadow: 0 4px 12px rgba(125,42,232,0.4);">
+                            ✨
+                        </div>
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <h2 style="margin: 0; font-size: 20px; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em;">Canva 3D Studio</h2>
+                                <span style="background: linear-gradient(135deg, #7d2ae8, #00c4cc); color: #ffffff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: 0.05em; text-transform: uppercase;">Magic AI 3D</span>
+                                <span style="font-size: 11px; color: #94a3b8; font-family: monospace;">v{APP_VERSION}</span>
+                            </div>
+                            <p style="margin: 2px 0 0; font-size: 12px; color: #94a3b8;">Transform 2D hand-drawn sketches & Canva elements into hollow, watertight, 3D printable models in seconds.</p>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 11px; padding: 3px 8px; border-radius: 16px; background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #cbd5e1;">🎯 Lathe Geometry</span>
+                        <span style="font-size: 11px; padding: 3px 8px; border-radius: 16px; background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #cbd5e1;">🖨️ Binary STL Ready</span>
+                        <span style="font-size: 11px; padding: 3px 8px; border-radius: 16px; background: rgba(30,41,59,0.8); border: 1px solid #334155; color: #cbd5e1;">⚡ InstantMesh FP16</span>
+                    </div>
+                </div>
+                ''',
                 elem_id="app-title",
             )
 
@@ -910,7 +1046,15 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row(equal_height=False):
             with gr.Column(scale=1, min_width=380):
-                gr.HTML('<p class="panel-header">Sketch Input</p>')
+                gr.HTML('<p class="panel-header">🎨 Canva 3D Elements (Click to Load Template)</p>')
+                with gr.Row(elem_classes=["canva-elements-row"]):
+                    btn_elem_vase = gr.Button("🏺 Ceramic Vase", variant="secondary", size="sm")
+                    btn_elem_mug = gr.Button("☕ Nordic Mug", variant="secondary", size="sm")
+                    btn_elem_chair = gr.Button("🪑 Lounge Chair", variant="secondary", size="sm")
+                    btn_elem_bottle = gr.Button("🍶 Water Bottle", variant="secondary", size="sm")
+                    btn_elem_bowl = gr.Button("🥣 Zen Bowl", variant="secondary", size="sm")
+
+                gr.HTML('<p class="panel-header" style="margin-top:8px;">🎨 Drawing Canvas & Upload</p>')
                 gr.HTML(_HTML5_CANVAS_HTML, elem_id="html5-canvas-root")
 
                 with gr.Accordion(
@@ -954,6 +1098,18 @@ def build_ui() -> gr.Blocks:
                     elem_id="prompt-input",
                 )
 
+                gr.HTML('<p class="panel-header" style="margin-top:6px;">✨ Canva Magic Style & Material Palette</p>')
+                with gr.Row(elem_classes=["canva-materials-row"]):
+                    btn_mat_porcelain = gr.Button("🏺 Porcelain", variant="secondary", size="sm")
+                    btn_mat_gold = gr.Button("🪙 Gold", variant="secondary", size="sm")
+                    btn_mat_titanium = gr.Button("⚙️ Titanium", variant="secondary", size="sm")
+                    btn_mat_walnut = gr.Button("🪵 Walnut", variant="secondary", size="sm")
+                with gr.Row(elem_classes=["canva-materials-row"]):
+                    btn_mat_terracotta = gr.Button("🧱 Terracotta", variant="secondary", size="sm")
+                    btn_mat_glass = gr.Button("🧊 Glass", variant="secondary", size="sm")
+                    btn_mat_obsidian = gr.Button("🌌 Obsidian", variant="secondary", size="sm")
+                    btn_mat_coral = gr.Button("🍬 Coral", variant="secondary", size="sm")
+
                 with gr.Accordion(
                     label="Pipeline Parameters",
                     open=False,
@@ -989,9 +1145,10 @@ def build_ui() -> gr.Blocks:
                         size="sm",
                     )
                     btn_generate = gr.Button(
-                        "Generate 3D Asset",
+                        "✨ Magic 3D Generate",
                         variant="primary",
                         size="sm",
+                        elem_id="btn-magic-generate",
                     )
                     btn_clear = gr.Button(
                         "Clear",
@@ -1040,23 +1197,23 @@ def build_ui() -> gr.Blocks:
                     visible=True,
                 )
 
-        with gr.Accordion("🌟 Four Unique Selling Propositions (USPs)", open=True, elem_id="usp-suite-accordion"):
+        with gr.Accordion("✨ Canva Magic Studio AI Tools (4 USPs)", open=True, elem_id="usp-suite-accordion"):
             with gr.Tabs():
-                with gr.Tab("1. 🎯 Sketch Fidelity Score"):
+                with gr.Tab("1. 🎯 Canva Magic Fidelity"):
                     gr.Markdown("Evaluate how closely the 3D model's silhouette preserves the hand-drawn sketch contours.")
                     with gr.Row():
                         btn_eval_fidelity = gr.Button("Calculate Fidelity Score", variant="secondary", size="sm")
                     fidelity_status = gr.Textbox(label="Silhouette Similarity & Alignment Assessment", interactive=False, lines=2)
                     fidelity_preview = gr.Image(label="Contour Alignment Overlay (Green: Overlap, Blue: 3D Hull)", type="pil", interactive=False, height=280)
 
-                with gr.Tab("2. 🌐 Multi-View Intelligence"):
+                with gr.Tab("2. 📸 Canva Magic Multi-View"):
                     gr.Markdown("Inspect the 3D asset from multiple synchronized viewpoints (Front, Right Side, Back, Top). Use viewer toolbar buttons for interactive 360° camera presets.")
                     with gr.Row():
                         btn_gen_multiview = gr.Button("Render 4-View Orthographic Collage", variant="secondary", size="sm")
                     multiview_status = gr.Textbox(label="Multi-View Status", interactive=False, lines=1)
                     multiview_preview = gr.Image(label="4-Angle Orthographic Views (Front / Side / Back / Top)", type="pil", interactive=False, height=320)
 
-                with gr.Tab("3. 🎨 Component-Level Editing"):
+                with gr.Tab("3. 🎨 Canva Magic Component Studio"):
                     gr.Markdown("Select and customize individual regions of the 3D asset independently without altering overall geometry.")
                     with gr.Row():
                         comp_dropdown = gr.Dropdown(label="Target Component", choices=COMPONENT_PRESETS if _USP_AVAILABLE else ["Upper Section / Top Rim", "Central Body / Core", "Base / Stand / Legs"], value="Base / Stand / Legs", scale=1)
@@ -1066,7 +1223,7 @@ def build_ui() -> gr.Blocks:
                         btn_apply_component = gr.Button("Apply Component Material Edit", variant="primary", size="sm")
                     comp_status = gr.Textbox(label="Component Edit Status", interactive=False, lines=1)
 
-                with gr.Tab("4. ⚡ AI Design Variations"):
+                with gr.Tab("4. 🎭 Canva Magic Design Remix (3 Variations)"):
                     gr.Markdown("Generate multiple aesthetic styles from the same structural sketch without redrawing.")
                     with gr.Row():
                         btn_gen_variations = gr.Button("Generate 3 Style Variations from Sketch", variant="secondary", size="sm")
@@ -1203,14 +1360,44 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Enable Gradio debug mode")
     args = parser.parse_args()
 
+    if isinstance(gr, _GrMock) or not hasattr(gr, "Blocks"):
+        print("\n" + "=" * 70)
+        print("  [ERROR] 'gradio' package is required to run the Web UI.")
+        print("  Please install gradio using:")
+        print("      pip install gradio>=4.20.0")
+        print("  Or install all project dependencies:")
+        print("      pip install -r requirements.txt")
+        print("=" * 70 + "\n")
+        sys.exit(1)
+
     logger.info("Starting %s v%s", APP_TITLE, APP_VERSION)
 
+    outputs_dir = Path("outputs").resolve()
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    ui_dir = Path("ui").resolve()
+
     demo = build_ui()
-    demo.launch(
-        server_name=args.host,
-        server_port=args.port,
-        share=args.share,
-        debug=args.debug,
-        show_error=True,
-        allowed_paths=["ui", "outputs"],
-    )
+
+    ports_to_try = [args.port] if args.port != 7860 else [7860, 7861, 7862, 7865, 8080]
+    launched = False
+
+    for p in ports_to_try:
+        try:
+            logger.info("Attempting to launch UI server on http://%s:%d ...", args.host, p)
+            demo.launch(
+                server_name=args.host,
+                server_port=p,
+                share=args.share,
+                debug=args.debug,
+                show_error=True,
+                allowed_paths=[str(ui_dir), str(outputs_dir)],
+                prevent_thread_lock=False,
+            )
+            launched = True
+            break
+        except OSError as err:
+            logger.warning("Port %d is unavailable or in use (%s). Trying next port...", p, err)
+
+    if not launched:
+        logger.error("Failed to bind UI server on any candidate port. Ensure ports 7860-7865 are not held by orphan processes.")
+        sys.exit(1)
