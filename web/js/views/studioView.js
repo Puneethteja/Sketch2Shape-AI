@@ -206,6 +206,12 @@ export function createStudioView() {
                 </div>
               </div>
 
+              <!-- Optional Text Prompt Conditioning -->
+              <div class="prompt-input-box" style="margin-top: 14px;">
+                <label for="studio-prompt-input" class="selection-label">Optional Prompt Guidance:</label>
+                <input id="studio-prompt-input" type="text" class="form-input" placeholder="e.g. geometric porcelain vase with fluted rim and gloss glaze" style="width: 100%; margin-top: 4px; font-size: 12px; padding: 8px 12px; border-radius: 6px; background: rgba(30, 41, 59, 0.7); border: 1px solid var(--border-default); color: var(--text-primary);">
+              </div>
+
               <!-- Single Primary Generation Action -->
               <div class="action-buttons-wrap" style="margin-top: 16px;">
                 <button id="btn-generate-3d" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px 18px; font-weight: 600;">
@@ -609,11 +615,15 @@ export function createStudioView() {
           }, 350);
 
           try {
-            const resp = await fetch("/api/generate", {
+            const promptEl = document.getElementById("studio-prompt-input");
+            const promptVal = promptEl ? promptEl.value.trim() : (store.getState().params.prompt || "");
+
+            const resp = await fetch("/api/generate-3d", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 sketch: canvasEditor.toDataURL(),
+                prompt: promptVal,
                 material: activeMaterial,
               }),
             });

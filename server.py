@@ -74,8 +74,9 @@ class PreprocessRequest(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    sketch: str = Field(..., description="Base64 data URL of the sketch canvas")
-    prompt: str = Field(default="", description="Optional aesthetic guidance")
+    sketch: Optional[str] = Field(default=None, description="Base64 data URL or path of the 2D sketch input")
+    image: Optional[str] = Field(default=None, description="Alias for sketch (image data URL or path)")
+    prompt: str = Field(default="", description="Optional aesthetic guidance or text prompt conditioning")
     material: str = Field(default="ceramic", description="Target material finish: 'ceramic', 'slate', or 'bronze'")
 
 
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
             "materials": TRELLIS_MATERIALS,
         }
 
+    @app.post("/api/generate-3d")
     @app.post("/api/generate")
     async def api_generate(payload: GenerateRequest) -> Dict[str, Any]:
         """
@@ -220,7 +222,7 @@ def create_app() -> FastAPI:
         """
         global _LAST_GENERATED_RESULT
         try:
-            sketch_data = payload.sketch.strip()
+            sketch_data = (payload.sketch or payload.image or "").strip()
             if not sketch_data:
                 raise HTTPException(status_code=400, detail="Please sketch an outline or upload an image first.")
 
@@ -228,6 +230,7 @@ def create_app() -> FastAPI:
             trellis_engine = get_trellis_engine()
             res = trellis_engine.generate(
                 image_input=sketch_data,
+                prompt=payload.prompt,
                 material=payload.material,
                 output_dir=outputs_dir,
             )

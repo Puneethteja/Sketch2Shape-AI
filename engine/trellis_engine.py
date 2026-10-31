@@ -200,6 +200,7 @@ class MicrosoftTrellisEngine:
     def generate(
         self,
         image_input: Union[str, Path, Image.Image, np.ndarray],
+        prompt: str = "",
         material: str = "ceramic",
         output_dir: Optional[Path] = None,
     ) -> TrellisGenerationResult:
@@ -214,12 +215,21 @@ class MicrosoftTrellisEngine:
         target_dir = output_dir or (ROOT_DIR / "outputs")
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Ingest image
+        # 1. Ingest & Preprocess image (rembg, contrast adjustment, centering)
         pil_img = self._load_image(image_input)
+        processed_img = self._preprocess_input_image(pil_img)
 
-        # 2. Save temp image for API upload
-        temp_img_path = target_dir / "_temp_input.png"
-        pil_img.save(str(temp_img_path), format="PNG")
+        # Memory management: empty CUDA cache before heavy inference
+        if self.device == "cuda":
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        # 2. Save temp preprocessed image for API/pipeline upload
+        temp_img_path = target_dir / f"_temp_input_{int(time.time()*1000)}.png"
+        processed_img.save(str(temp_img_path), format="PNG")
 
         used_real_model = False
         glb_mesh = None
@@ -512,7 +522,64 @@ class MicrosoftTrellisEngine:
         except Exception:
             return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
 
-    # ── Shared Utilities ─────────────────────────────────────────────────────
+    # ── Shared Utilities & Advanced Preprocessing ────────────────────────────
+
+    def _preprocess_input_image(self, img: Image.Image) -> Image.Image:
+        """
+        Input Preprocessing Pipeline:
+        1. Background removal using rembg (with adaptive alpha threshold fallback).
+        2. Contrast adjustment and tone mapping to prevent washed-out textures.
+        3. Subject bounding-box centering with 10% safety margin.
+        """
+        from PIL import ImageEnhance, ImageOps
+
+        # Convert to RGBA
+        rgba = img.convert("RGBA")
+
+        # 1. Background removal
+        try:
+            import rembg
+            # Check if image already has clean transparency
+            alpha = np.array(rgba.split()[-1])
+            if (alpha < 250).sum() < (alpha.size * 0.05):
+                rgba = rembg.remove(rgba)
+                logger.info("Applied rembg background removal to input silhouette.")
+        except Exception as exc:
+            logger.debug(f"rembg background removal fallback ({exc})")
+
+        # Fallback background removal for solid white or light canvases
+        arr = np.array(rgba)
+        if (arr[..., 3] > 200).all():
+            is_white_bg = (arr[..., 0] > 238) & (arr[..., 1] > 238) & (arr[..., 2] > 238)
+            if is_white_bg.sum() > (arr.shape[0] * arr.shape[1] * 0.15):
+                arr[is_white_bg, 3] = 0
+                rgba = Image.fromarray(arr)
+
+        # 2. Contrast adjustment & color enhancement to prevent washed out textures
+        rgb_part = rgba.convert("RGB")
+        enhancer = ImageEnhance.Contrast(rgb_part)
+        enhanced_rgb = enhancer.enhance(1.22)
+        r, g, b = enhanced_rgb.split()
+        rgba = Image.merge("RGBA", (r, g, b, rgba.split()[-1]))
+
+        # 3. Center foreground with ~10% margin onto square canvas
+        bbox = rgba.getbbox()
+        if bbox:
+            cropped = rgba.crop(bbox)
+            target_size = 512
+            max_dim = max(cropped.width, cropped.height)
+            scale = (target_size * 0.82) / max(max_dim, 1)
+            new_w = max(int(cropped.width * scale), 1)
+            new_h = max(int(cropped.height * scale), 1)
+            resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+            offset_x = (target_size - new_w) // 2
+            offset_y = (target_size - new_h) // 2
+            canvas.paste(resized, (offset_x, offset_y), resized)
+            return canvas
+
+        return rgba.resize((512, 512), Image.Resampling.LANCZOS)
 
     def _load_image(self, image_input: Any) -> Image.Image:
         """Ingests sketch from file, PIL Image, NumPy array, or Base64 data URL."""

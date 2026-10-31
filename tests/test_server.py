@@ -86,6 +86,32 @@ def test_export_api_valid_format(client):
     assert data["format"] == "GLB"
 
 
+def test_generate_3d_api(client):
+    img = np.ones((512, 512, 3), dtype=np.uint8) * 255
+    img[200:300, 200:300] = 0
+    pil_img = Image.fromarray(img)
+    buf = io.BytesIO()
+    pil_img.save(buf, format="PNG")
+    b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    response = client.post(
+        "/api/generate-3d",
+        json={
+            "sketch": b64,
+            "prompt": "Nordic minimalist ceramic mug",
+            "material": "slate",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["glb_url"].startswith("/outputs/")
+    assert data["obj_url"].startswith("/outputs/")
+    assert data["stl_url"].startswith("/outputs/")
+    assert data["ply_url"].startswith("/outputs/")
+    assert data["vertices"] > 0
+
+
 def test_generate_api(client):
     # Create simple dummy circle sketch
     img = np.ones((512, 512, 3), dtype=np.uint8) * 255
