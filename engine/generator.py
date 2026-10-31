@@ -1,19 +1,7 @@
 """
 engine/generator.py
-===================
-Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
-Lead Engineer : Mona (Generative AI & 3D Reconstruction)
-
-Production generative diffusion pipeline conditioning Stable Diffusion v1.5
-on hand-drawn sketches via ControlNet (Scribble/Lineart) adapters.
-
-Features:
-1. Dynamic initialization of Stable Diffusion v1.5 + ControlNet Scribble in FP16.
-2. Text-prompt conditioning logic blending optional user descriptions with
-   calibrated 3D quality booster and negative prompt templates.
-3. Parameter calibration: ControlNet conditioning scale (0.7 - 0.95) and CFG (7.0 - 8.5).
-4. GPU VRAM optimization: Attention Slicing, VAE Slicing, and PyTorch 2.x SDPA.
-5. High-fidelity synthetic fallback generator for CPU and offline test environments.
+Sketch2Shape AI - Generative diffusion pipeline conditioning Stable Diffusion v1.5
+on hand-drawn sketches via ControlNet adapters with calibrated parameters.
 """
 
 from __future__ import annotations
@@ -27,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-# Reconfigure stdout to utf-8 if supported to prevent Windows charmap encoding errors
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -46,17 +33,12 @@ logger = logging.getLogger("sketch2shape.generator")
 
 CHECKPOINTS_DIR = Path(__file__).resolve().parent / "checkpoints"
 
-
-# ── Prompt Engineering Templates ─────────────────────────────────────────────
-
-# Quality booster tokens engineered specifically for clean 3D mesh reconstruction
 PROMPT_3D_BOOSTER = (
     "3d asset, single centered object, isolated on clean neutral white background, "
     "studio lighting, highly detailed, photorealistic, sharp focus, clean geometry, "
     "solid material, product render, 8k resolution"
 )
 
-# Negative prompt suppresses background noise, multiple objects, and diffusion artifacts
 DEFAULT_NEGATIVE_PROMPT = (
     "blurry, low quality, distorted, extra limbs, bad anatomy, deformed, watermark, "
     "text, signature, logo, shadows on background, messy background, cluttered, "
@@ -64,32 +46,22 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 
-# ── Configuration Dataclass ──────────────────────────────────────────────────
-
 @dataclass
 class DiffusionConfig:
-    """Hyperparameter configuration for sketch-guided diffusion generation."""
     sd_model_id: str = "runwayml/stable-diffusion-v1-5"
     controlnet_model_id: str = "lllyasviel/control_v11p_sd15_scribble"
-    controlnet_scale: float = 0.85          # Calibrated in target 0.70 - 0.95 range
-    guidance_scale: float = 7.5             # Classifier-Free Guidance (CFG) scale
-    num_inference_steps: int = 30           # 20-30 for interactive latency; 50 for final
+    controlnet_scale: float = 0.80
+    guidance_scale: float = 7.0
+    num_inference_steps: int = 20
     target_size: Tuple[int, int] = (512, 512)
     device: str = "cuda"
-    torch_dtype: str = "float16"            # "float16" for GPU low VRAM, "float32" for CPU
+    torch_dtype: str = "float16"
     enable_attention_slicing: bool = True
     enable_vae_slicing: bool = True
-    enable_cpu_offload: bool = False        # For ultra-low VRAM (< 6 GB) environments
+    enable_cpu_offload: bool = False
 
-
-# ── Generator Class ──────────────────────────────────────────────────────────
 
 class SketchDiffusionGenerator:
-    """
-    Orchestrates sketch-guided 2.5D generation using Stable Diffusion v1.5
-    and ControlNet Scribble in FP16 half-precision.
-    """
-
     def __init__(self, config: Optional[DiffusionConfig] = None) -> None:
         self.config = config or DiffusionConfig()
         self.device = self._resolve_device(self.config.device)
@@ -99,7 +71,6 @@ class SketchDiffusionGenerator:
         self._initialize_pipeline()
 
     def _resolve_device(self, requested_device: str) -> str:
-        """Resolves target execution device based on CUDA availability."""
         try:
             import torch
             if requested_device.startswith("cuda") and torch.cuda.is_available():
@@ -109,10 +80,6 @@ class SketchDiffusionGenerator:
         return "cpu"
 
     def _initialize_pipeline(self) -> None:
-        """
-        Attempts to load Hugging Face Diffusers pipeline in FP16.
-        Falls back to high-fidelity mock generator if dependencies or checkpoints are absent.
-        """
         try:
             import torch
             from diffusers import (
@@ -124,7 +91,6 @@ class SketchDiffusionGenerator:
 
             dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
 
-            # Locate local cached weights if present
             local_sd = CHECKPOINTS_DIR / "stable_diffusion"
             local_cn = CHECKPOINTS_DIR / "controlnet" / "scribble"
 
@@ -145,10 +111,8 @@ class SketchDiffusionGenerator:
                 safety_checker=None,
             )
 
-            # Fast multi-step scheduler for lower latency (15-30 steps instead of 50)
             self.pipeline.scheduler = UniPCMultistepScheduler.from_config(self.pipeline.scheduler.config)
 
-            # Memory optimization guards for NVIDIA T4 / V100
             if self.device.startswith("cuda"):
                 if self.config.enable_cpu_offload:
                     self.pipeline.enable_model_cpu_offload()
@@ -161,7 +125,6 @@ class SketchDiffusionGenerator:
 
                 if self.config.enable_vae_slicing:
                     self.pipeline.enable_vae_slicing()
-
             else:
                 self.pipeline.to("cpu")
 
@@ -177,12 +140,8 @@ class SketchDiffusionGenerator:
             self._is_mock = True
 
     def build_conditioned_prompt(self, user_prompt: Optional[str]) -> Tuple[str, str]:
-        """
-        Synthesizes user description with 3D quality booster and negative prompt.
-        """
         clean_user_prompt = (user_prompt or "").strip()
         if clean_user_prompt:
-            # Emphasize user prompt while appending 3D reconstruction cues
             full_prompt = f"{clean_user_prompt}, {PROMPT_3D_BOOSTER}"
         else:
             full_prompt = f"a clean 3D physical object shape, {PROMPT_3D_BOOSTER}"
@@ -190,18 +149,12 @@ class SketchDiffusionGenerator:
         return full_prompt, DEFAULT_NEGATIVE_PROMPT
 
     def _prepare_control_image(self, sketch_input: Union[Image.Image, np.ndarray, Any]) -> Image.Image:
-        """
-        Converts varied input types (PIL, NumPy array, or PyTorch tensor)
-        into a 512x512 RGB PIL Image for ControlNet Scribble conditioning.
-        """
         if isinstance(sketch_input, Image.Image):
             pil_img = sketch_input.convert("RGB")
         elif isinstance(sketch_input, np.ndarray):
-            # Handle grayscale (H, W), RGB (H, W, 3), or RGBA (H, W, 4)
             if sketch_input.ndim == 2:
                 pil_img = Image.fromarray(sketch_input).convert("RGB")
             elif sketch_input.shape[-1] == 4:
-                # Alpha composite over white
                 img_rgba = Image.fromarray(sketch_input)
                 bg = Image.new("RGB", img_rgba.size, (255, 255, 255))
                 bg.paste(img_rgba, mask=img_rgba.split()[3])
@@ -209,7 +162,6 @@ class SketchDiffusionGenerator:
             else:
                 pil_img = Image.fromarray(sketch_input.astype(np.uint8)).convert("RGB")
         elif hasattr(sketch_input, "cpu") and hasattr(sketch_input, "numpy"):
-            # PyTorch Tensor: (C, H, W) or (1, C, H, W)
             tensor_cpu = sketch_input.detach().cpu()
             if tensor_cpu.ndim == 4:
                 tensor_cpu = tensor_cpu.squeeze(0)
@@ -224,7 +176,6 @@ class SketchDiffusionGenerator:
         else:
             raise ValueError(f"Unsupported sketch input format: {type(sketch_input)}")
 
-        # Ensure exact 512x512 dimensions
         if pil_img.size != self.config.target_size:
             pil_img = pil_img.resize(self.config.target_size, Image.Resampling.BILINEAR)
 
@@ -239,33 +190,15 @@ class SketchDiffusionGenerator:
         num_inference_steps: Optional[int] = None,
         seed: int = -1,
     ) -> Tuple[Image.Image, int, float]:
-        """
-        Executes sketch-conditioned diffusion generation.
-
-        Parameters:
-            sketch_input: Hand-drawn sketch image or binary lineart tensor.
-            prompt: Optional text prompt specifying style, colors, materials.
-            controlnet_scale: Conditioning scale (0.0 - 2.0). Default calibrated: 0.85.
-            guidance_scale: Classifier-free guidance scale. Default: 7.5.
-            num_inference_steps: Denoising steps. Default: 30.
-            seed: RNG seed for deterministic reproduction (-1 for random).
-
-        Returns:
-            (generated_image, concrete_seed_used, elapsed_seconds)
-        """
         t0 = time.perf_counter()
 
-        # Resolve RNG seed
         seed_used = int(seed if seed >= 0 else np.random.randint(0, 2**31 - 1))
 
-        # Prepare prompts
         pos_prompt, neg_prompt = self.build_conditioned_prompt(prompt)
 
-        # Calibrated parameters
         cn_scale = float(
             controlnet_scale if controlnet_scale is not None else self.config.controlnet_scale
         )
-        # Enforce safe bounds documented in §3.2 (0.0 to 2.0; recommended 0.70 - 0.95)
         cn_scale = max(0.0, min(2.0, cn_scale))
 
         cfg_scale = float(
@@ -297,7 +230,6 @@ class SketchDiffusionGenerator:
             )
             out_img = result.images[0]
         else:
-            # High-fidelity synthetic fallback generator for CPU / test environments
             out_img = self._generate_synthetic_conditioned_image(control_img, pos_prompt, seed_used)
 
         elapsed = round(time.perf_counter() - t0, 3)
@@ -310,25 +242,18 @@ class SketchDiffusionGenerator:
         prompt: str,
         seed: int,
     ) -> Image.Image:
-        """
-        Creates a synthetic shaded 2.5D visual asset adhering to sketch contours.
-        Used for offline testing, CI, and CPU fallback environments.
-        """
         rng = np.random.RandomState(seed % (2**31 - 1))
         ctrl_arr = np.array(control_img.convert("L")).astype(np.float32)
 
-        # Invert if sketch is black stroke on white canvas
         if ctrl_arr.mean() > 128:
             strokes = (255.0 - ctrl_arr) / 255.0
         else:
             strokes = ctrl_arr / 255.0
 
-        # Create smooth distance transform / shading mask
         from scipy.ndimage import gaussian_filter
         shading = gaussian_filter(strokes, sigma=8.0)
         norm_shading = (shading - shading.min()) / (shading.max() - shading.min() + 1e-6)
 
-        # Pick base tone based on prompt keywords
         p_lower = prompt.lower()
         if "ceramic" in p_lower or "white" in p_lower:
             base_color = np.array([230, 232, 235], dtype=np.float32)
@@ -341,7 +266,6 @@ class SketchDiffusionGenerator:
         else:
             base_color = np.array([180, 185, 195], dtype=np.float32)
 
-        # 3D shading model (ambient + directional light)
         H, W = ctrl_arr.shape
         Y, X = np.ogrid[:H, :W]
         light_dir = np.array([-0.5, 0.5, 0.7])
@@ -356,7 +280,6 @@ class SketchDiffusionGenerator:
         diffuse = np.clip(np.sum(normals * light_dir, axis=-1), 0.2, 1.0)
         diffuse = np.expand_dims(diffuse, -1)
 
-        # Composite shaded object onto clean white background
         object_mask = np.expand_dims(norm_shading > 0.05, -1)
         canvas = np.ones((H, W, 3), dtype=np.float32) * 255.0
         shaded_object = base_color * diffuse
@@ -365,11 +288,11 @@ class SketchDiffusionGenerator:
         return Image.fromarray(np.clip(composed, 0, 255).astype(np.uint8))
 
     def unload(self) -> None:
-        """
-        Releases pipeline weights and executes CUDA cache cleanup.
-        Essential for sequential execution on 16GB GPUs (NVIDIA T4).
-        """
         if self.pipeline is not None:
+            try:
+                self.pipeline.to("cpu")
+            except Exception:
+                pass
             del self.pipeline
             self.pipeline = None
 
@@ -378,6 +301,8 @@ class SketchDiffusionGenerator:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
                 logger.info("Evacuated SketchDiffusionGenerator weights from CUDA VRAM.")
         except ImportError:
             pass
