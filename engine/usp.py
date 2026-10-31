@@ -398,7 +398,10 @@ class ComponentEditor:
                 vertex_colors=new_colors,
                 process=False,
             )
-            updated_mesh.is_watertight = getattr(mesh, "is_watertight", True)
+            try:
+                updated_mesh.is_watertight = getattr(mesh, "is_watertight", True)
+            except (AttributeError, TypeError):
+                pass
             return updated_mesh
         else:
             return TrimeshFallback(
