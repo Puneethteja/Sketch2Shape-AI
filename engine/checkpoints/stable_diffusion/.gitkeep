@@ -1,0 +1,2 @@
+# Placeholder for Stable Diffusion v1.5 model weights (FP16 safetensors)
+# Download with: python engine/checkpoints/download_checkpoints.py --model sd15

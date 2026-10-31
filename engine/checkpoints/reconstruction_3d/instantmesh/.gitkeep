@@ -1,0 +1,2 @@
+# Placeholder for InstantMesh 3D reconstruction weights (instant_mesh_large.ckpt, zero123plus)
+# Download with: python engine/checkpoints/download_checkpoints.py --model instantmesh

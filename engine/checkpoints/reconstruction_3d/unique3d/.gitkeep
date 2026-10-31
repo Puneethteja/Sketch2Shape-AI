@@ -1,0 +1,2 @@
+# Placeholder for Unique3D mesh reconstruction weights (image-to-normal, image-to-color)
+# Download with: python engine/checkpoints/download_checkpoints.py --model unique3d
