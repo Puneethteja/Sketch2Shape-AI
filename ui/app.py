@@ -1,65 +1,40 @@
-"""
-ui/app.py
-=========
-Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
-Lead Engineer : Laxmi (Frontend, WebGL & Technical Documentation)
-
-Professional, utility-driven Gradio interface providing a structured
-dual-viewport layout for sketch input and WebGL 3D asset preview.
-
-Layout
-------
-┌─────────────────────────────────┬─────────────────────────────────┐
-│          INPUT PANEL            │         OUTPUT PANEL            │
-│  ─ HTML5 Interactive Canvas     │  ─ WebGL 3-D Previewer (Three)  │
-│  ─ File uploader (.png/jpg/jpeg)│  ─ Preprocessed lineart view    │
-│  ─ Material & style prompt      │  ─ AI Engine depth / normal map │
-│  ─ Pipeline parameters          │  ─ Mesh export & binary GLB dl  │
-└─────────────────────────────────┴─────────────────────────────────┘
-
-Integration Contracts
----------------------
-* Input canvas / file upload  → engine.preprocessing.preprocess() [Puneeth]
-* Preprocessed tensor         → engine.ai_engine.generate()      [Mona]
-* Generated mesh              → trimesh serialiser / WebGL viewer [Laxmi]
-"""
-
 from __future__ import annotations
 
+import base64
+import io
 import logging
+import os
 import sys
-import tempfile
+import time
 from pathlib import Path
-<<<<<<< HEAD
-from typing import Any, Dict, Optional, Tuple
-=======
-from typing import Optional, Tuple, Union
->>>>>>> 2542941326ba4098c948ce9e0f89301eb7076c7d
+from typing import Any, Optional, Tuple, Union
 
 import gradio as gr
 import numpy as np
 from PIL import Image
 
-# ── Project root on sys.path ──────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-# ── Lazy engine import (engine may not be installed in every demo env) ─────────
 try:
     from engine.preprocessing import preprocess, TARGET_SIZE
     _PREPROCESSING_AVAILABLE = True
 except ImportError:
     _PREPROCESSING_AVAILABLE = False
 
-# -- Lazy AI engine import (Mona's generative + 3D pipeline) --
 try:
-    import engine.ai_engine as _ai_engine
-    _AI_ENGINE_AVAILABLE = True
+    from engine.pipeline import Sketch2ShapePipeline, GenerationResult
+    _PIPELINE_AVAILABLE = True
 except ImportError:
-    _AI_ENGINE_AVAILABLE = False
+    _PIPELINE_AVAILABLE = False
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+try:
+    from engine.mesh_utils import repair_mesh, TrimeshFallback
+    _MESH_UTILS_AVAILABLE = True
+except ImportError:
+    _MESH_UTILS_AVAILABLE = False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -67,78 +42,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sketch2shape.ui")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-APP_TITLE   = "Sketch2Shape AI"
-APP_VERSION = "0.2.0-phase2"
+APP_TITLE = "Sketch2Shape AI"
+APP_VERSION = "0.3.0-phase3"
 
-# Supported sketch export formats
 SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
-
-<<<<<<< HEAD
-# Session state store for active pipeline assets
-_SESSION: Dict[str, Any] = {
-    "current_mesh": None,
-    "current_source": None,
-    "last_result": None,
-}
-
-# Placeholder colour for the WebGL viewport stub
-_WEBGL_STUB_COLOR = "#1a1a2e"
-=======
-# Supported raster sketch upload extensions
 SUPPORTED_UPLOAD_EXTENSIONS = [".png", ".jpg", ".jpeg"]
-
-# Placeholder colour for the WebGL viewport
 _WEBGL_STUB_COLOR = "#090d16"
->>>>>>> 2542941326ba4098c948ce9e0f89301eb7076c7d
 
-# ─────────────────────────────────────────────────────────────────────────────
-# WebGL Viewport Stub & HTML Definition
-# Preserved for backward compatibility and test validation
-# ─────────────────────────────────────────────────────────────────────────────
+_LAST_GENERATED_MESH: Optional[Any] = None
 
 _WEBGL_STUB_HTML = """
-<div style="
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    background: #090d16;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    font-family: 'SF Mono', 'JetBrains Mono', monospace;
-    color: #94a3b8;
-    user-select: none;
-">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
-         stroke="#475569" stroke-width="1.5" stroke-linecap="round"
-         stroke-linejoin="round">
-        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2
-                 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2
-                 2 0 0 0 21 16z"/>
+<div style="width: 100%; aspect-ratio: 1 / 1; background: #090d16; border: 1px solid #334155; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-family: 'SF Mono', 'JetBrains Mono', monospace; color: #94a3b8; user-select: none;">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
         <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
         <line x1="12" y1="22.08" x2="12" y2="12"/>
     </svg>
-    <span style="font-size: 13px; letter-spacing: 0.04em;">
-        WebGL 3D Previewer
-    </span>
-    <span style="font-size: 11px; color: #64748b;">
-        Three.js · 360° Orbit · Pan · Zoom · GLB
-    </span>
+    <span style="font-size: 13px; letter-spacing: 0.04em;">WebGL 3D Previewer</span>
+    <span style="font-size: 11px; color: #64748b;">Three.js · 360° Orbit · Pan · Zoom · GLB</span>
 </div>
 """
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Embedded WebGL 3D Previewer Component Markup & Controller Hook
-# ─────────────────────────────────────────────────────────────────────────────
-
 _WEBGL_VIEWER_HTML = """
-<div id="s2s-webgl-viewer-root" style="width: 100%; min-height: 420px; border-radius: 6px; overflow: hidden; border: 1px solid #334155;">
-    <!-- Host container populated by ui/viewer.js -->
-</div>
+<div id="s2s-webgl-viewer-root" style="width: 100%; min-height: 420px; border-radius: 6px; overflow: hidden; border: 1px solid #334155;"></div>
 
 <script>
 (function() {
@@ -146,7 +72,6 @@ _WEBGL_VIEWER_HTML = """
         var container = document.getElementById("s2s-webgl-viewer-root");
         if (!container) return;
 
-        // Load viewer.js if not already present
         if (typeof window.Sketch2ShapeViewer === "undefined") {
             var script = document.createElement("script");
             script.src = "/file=ui/viewer.js";
@@ -159,7 +84,6 @@ _WEBGL_VIEWER_HTML = """
                 }
             };
             script.onerror = function() {
-                // Inline fallback if static file server is routed differently
                 loadViewerInline(container);
             };
             document.head.appendChild(script);
@@ -201,39 +125,11 @@ _WEBGL_VIEWER_HTML = """
 </script>
 """
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Interactive HTML5 Drawing Canvas Markup & Client-side Script
-# ─────────────────────────────────────────────────────────────────────────────
-
 _HTML5_CANVAS_HTML = """
-<div id="s2s-canvas-component" style="
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    padding: 10px;
-    color: #f8fafc;
-    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
-    user-select: none;
-">
-    <!-- ── Toolbar Row 1: Brush Size & Tool Modes ── -->
+<div id="s2s-canvas-component" style="display: flex; flex-direction: column; gap: 8px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; color: #f8fafc; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; user-select: none;">
     <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
-        <!-- Tool Selection: Brush vs Eraser -->
         <div style="display: flex; align-items: center; gap: 4px;">
-            <button id="s2s-tool-brush" type="button" class="s2s-tool-btn active" title="Brush Tool" style="
-                background: #1e293b;
-                border: 1px solid #0284c7;
-                color: #ffffff;
-                padding: 4px 10px;
-                font-size: 12px;
-                border-radius: 4px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                gap: 5px;
-            ">
+            <button id="s2s-tool-brush" type="button" class="s2s-tool-btn active" title="Brush Tool" style="background: #1e293b; border: 1px solid #0284c7; color: #ffffff; padding: 4px 10px; font-size: 12px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 19l7-7 3 3-7 7-3-3z"/>
                     <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
@@ -242,18 +138,7 @@ _HTML5_CANVAS_HTML = """
                 </svg>
                 Brush
             </button>
-            <button id="s2s-tool-eraser" type="button" class="s2s-tool-btn" title="Eraser Tool" style="
-                background: #1e293b;
-                border: 1px solid #334155;
-                color: #94a3b8;
-                padding: 4px 10px;
-                font-size: 12px;
-                border-radius: 4px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                gap: 5px;
-            ">
+            <button id="s2s-tool-eraser" type="button" class="s2s-tool-btn" title="Eraser Tool" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 4px 10px; font-size: 12px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z"/>
                     <path d="M17 17L7 7"/>
@@ -262,19 +147,9 @@ _HTML5_CANVAS_HTML = """
             </button>
         </div>
 
-        <!-- Color Picker & Quick Swatches -->
         <div style="display: flex; align-items: center; gap: 6px;">
             <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">Color</span>
-            <input id="s2s-canvas-color" type="color" value="#0f172a" title="Pick ink color" style="
-                width: 24px;
-                height: 24px;
-                padding: 0;
-                border: 1px solid #475569;
-                border-radius: 4px;
-                background: transparent;
-                cursor: pointer;
-            ">
-            <!-- Palette swatches -->
+            <input id="s2s-canvas-color" type="color" value="#0f172a" title="Pick ink color" style="width: 24px; height: 24px; padding: 0; border: 1px solid #475569; border-radius: 4px; background: transparent; cursor: pointer;">
             <div style="display: flex; gap: 3px;">
                 <span class="s2s-swatch" data-color="#000000" style="width:14px;height:14px;border-radius:2px;background:#000000;cursor:pointer;border:1px solid #475569;" title="Black"></span>
                 <span class="s2s-swatch" data-color="#334155" style="width:14px;height:14px;border-radius:2px;background:#334155;cursor:pointer;border:1px solid #475569;" title="Charcoal"></span>
@@ -283,51 +158,23 @@ _HTML5_CANVAS_HTML = """
             </div>
         </div>
 
-        <!-- Brush Size Adjustment -->
         <div style="display: flex; align-items: center; gap: 6px;">
             <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">Size</span>
-            <input id="s2s-brush-slider" type="range" min="1" max="40" value="4" style="
-                width: 90px;
-                accent-color: #0284c7;
-                cursor: pointer;
-            ">
+            <input id="s2s-brush-slider" type="range" min="1" max="40" value="4" style="width: 90px; accent-color: #0284c7; cursor: pointer;">
             <span id="s2s-brush-badge" style="font-size: 10px; font-family: monospace; color: #cbd5e1; min-width: 28px;">4px</span>
         </div>
     </div>
 
-    <!-- ── Toolbar Row 2: Undo, Redo, Clear Canvas ── -->
     <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #1e293b; padding-top: 6px;">
         <div style="display: flex; align-items: center; gap: 6px;">
-            <button id="s2s-btn-undo" type="button" disabled title="Undo last stroke" style="
-                background: #1e293b;
-                border: 1px solid #334155;
-                color: #64748b;
-                padding: 3px 8px;
-                font-size: 11px;
-                border-radius: 4px;
-                cursor: not-allowed;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            ">
+            <button id="s2s-btn-undo" type="button" disabled title="Undo last stroke" style="background: #1e293b; border: 1px solid #334155; color: #64748b; padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: not-allowed; display: flex; align-items: center; gap: 4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 7v6h6"/>
                     <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
                 </svg>
                 Undo <span id="s2s-undo-count" style="font-family:monospace;font-size:10px;"></span>
             </button>
-            <button id="s2s-btn-redo" type="button" disabled title="Redo stroke" style="
-                background: #1e293b;
-                border: 1px solid #334155;
-                color: #64748b;
-                padding: 3px 8px;
-                font-size: 11px;
-                border-radius: 4px;
-                cursor: not-allowed;
-                display: flex;
-                align-items: center;
-                gap: 4px;
-            ">
+            <button id="s2s-btn-redo" type="button" disabled title="Redo stroke" style="background: #1e293b; border: 1px solid #334155; color: #64748b; padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: not-allowed; display: flex; align-items: center; gap: 4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 7v6h-6"/>
                     <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>
@@ -336,18 +183,7 @@ _HTML5_CANVAS_HTML = """
             </button>
         </div>
 
-        <button id="s2s-btn-clear" type="button" title="Clear canvas contents" style="
-            background: #1e293b;
-            border: 1px solid #ef4444;
-            color: #f87171;
-            padding: 3px 8px;
-            font-size: 11px;
-            border-radius: 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        ">
+        <button id="s2s-btn-clear" type="button" title="Clear canvas contents" style="background: #1e293b; border: 1px solid #ef4444; color: #f87171; padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -356,24 +192,8 @@ _HTML5_CANVAS_HTML = """
         </button>
     </div>
 
-    <!-- ── Canvas Drawing Surface ── -->
-    <div style="
-        position: relative;
-        width: 100%;
-        aspect-ratio: 1 / 1;
-        background: #ffffff;
-        border-radius: 4px;
-        overflow: hidden;
-        border: 1px solid #334155;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        cursor: crosshair;
-        touch-action: none;
-    ">
-        <canvas id="s2s-html5-canvas" width="512" height="512" style="
-            width: 100%;
-            height: 100%;
-            display: block;
-        "></canvas>
+    <div style="position: relative; width: 100%; aspect-ratio: 1 / 1; background: #ffffff; border-radius: 4px; overflow: hidden; border: 1px solid #334155; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); cursor: crosshair; touch-action: none;">
+        <canvas id="s2s-html5-canvas" width="512" height="512" style="width: 100%; height: 100%; display: block;"></canvas>
     </div>
 </div>
 
@@ -385,13 +205,11 @@ _HTML5_CANVAS_HTML = """
         var ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) return;
 
-        // Fill white background for sketch contrast
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // State variables
         var isDrawing = false;
-        var mode = "brush"; // "brush" | "eraser"
+        var mode = "brush";
         var brushColor = "#0f172a";
         var brushSize = 4;
         var undoStack = [];
@@ -399,7 +217,6 @@ _HTML5_CANVAS_HTML = """
         var maxHistory = 30;
         var lastPoint = null;
 
-        // UI references
         var toolBrush = document.getElementById("s2s-tool-brush");
         var toolEraser = document.getElementById("s2s-tool-eraser");
         var colorPicker = document.getElementById("s2s-canvas-color");
@@ -444,7 +261,6 @@ _HTML5_CANVAS_HTML = """
             }
         }
 
-        // Pointer event coordinates mapped to canvas internal resolution
         function getPos(e) {
             var rect = canvas.getBoundingClientRect();
             var scaleX = canvas.width / rect.width;
@@ -486,7 +302,6 @@ _HTML5_CANVAS_HTML = """
             ctx.lineWidth = brushSize;
             ctx.strokeStyle = mode === "eraser" ? "#ffffff" : brushColor;
 
-            // Quadratic curve interpolation for smooth strokes
             var midX = (lastPoint.x + pt.x) / 2;
             var midY = (lastPoint.y + pt.y) / 2;
             ctx.moveTo(lastPoint.x, lastPoint.y);
@@ -506,7 +321,6 @@ _HTML5_CANVAS_HTML = """
         canvas.addEventListener("pointerup", endStroke);
         canvas.addEventListener("pointercancel", endStroke);
 
-        // Tool Mode selection
         if (toolBrush) {
             toolBrush.addEventListener("click", function() {
                 mode = "brush";
@@ -530,7 +344,6 @@ _HTML5_CANVAS_HTML = """
             });
         }
 
-        // Color Picker & Swatches
         if (colorPicker) {
             colorPicker.addEventListener("input", function(e) {
                 brushColor = e.target.value;
@@ -545,7 +358,6 @@ _HTML5_CANVAS_HTML = """
             });
         });
 
-        // Brush Size Slider
         if (brushSlider) {
             brushSlider.addEventListener("input", function(e) {
                 brushSize = parseInt(e.target.value, 10);
@@ -553,7 +365,6 @@ _HTML5_CANVAS_HTML = """
             });
         }
 
-        // Undo & Redo
         if (btnUndo) {
             btnUndo.addEventListener("click", function() {
                 if (undoStack.length === 0) return;
@@ -575,7 +386,6 @@ _HTML5_CANVAS_HTML = """
             });
         }
 
-        // Clear Canvas
         function clearCanvas() {
             saveState();
             ctx.fillStyle = "#ffffff";
@@ -586,7 +396,6 @@ _HTML5_CANVAS_HTML = """
             btnClear.addEventListener("click", clearCanvas);
         }
 
-        // Global hook so Gradio Clear button can trigger canvas reset
         window.s2sClearCanvas = function() {
             ctx.fillStyle = "#ffffff";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -596,7 +405,6 @@ _HTML5_CANVAS_HTML = """
             syncToGradio();
         };
 
-        // Initial sync
         setTimeout(syncToGradio, 200);
     }
 
@@ -609,155 +417,144 @@ _HTML5_CANVAS_HTML = """
 </script>
 """
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Handler functions
-# ─────────────────────────────────────────────────────────────────────────────
+def _resolve_input_source(
+    canvas_image: Optional[np.ndarray] = None,
+    uploaded_file: Optional[str] = None,
+    canvas_data_url: Optional[str] = None,
+) -> Optional[Union[np.ndarray, str]]:
+    if canvas_image is not None:
+        return canvas_image
+    if uploaded_file is not None:
+        return uploaded_file
+    if canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
+        return canvas_data_url
+    return None
 
 def _run_preprocessing(
     canvas_image: Optional[np.ndarray] = None,
     uploaded_file: Optional[str] = None,
     canvas_data_url: Optional[str] = None,
 ) -> Tuple[Optional[Image.Image], str]:
-    """
-    Stage 1 handler: ingest an HTML5 canvas drawing, Gradio sketchpad,
-    or uploaded file (.png, .jpg, .jpeg) and run Puneeth's preprocessing pipeline.
-
-    Parameters
-    ----------
-    canvas_image : np.ndarray or None
-        RGBA array from the Gradio sketchpad (``gr.Sketchpad``).
-    uploaded_file : str or None
-        File path from the file-uploader component.
-    canvas_data_url : str or None
-        Base64 data-URL string from the interactive HTML5 drawing canvas.
-
-    Returns
-    -------
-    preview_image : PIL.Image or None
-        Preprocessed / lineart image to display in the output panel.
-    status_message : str
-        Human-readable pipeline status for the status textbox.
-    """
-    source: Optional[Union[np.ndarray, str]] = None
-
-    # Priority: 1. Gradio canvas ndarray, 2. Uploaded file, 3. HTML5 canvas data-url
-    if canvas_image is not None:
-        logger.info("UI: Using canvas drawing (ndarray) as source")
-        source = canvas_image
-    elif uploaded_file is not None:
-        logger.info("UI: Using uploaded file as source: %s", uploaded_file)
-        source = uploaded_file
-    elif canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
-        logger.info("UI: Using HTML5 drawing canvas (base64 data-URL) as source")
-        source = canvas_data_url
-    else:
+    source = _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+    if source is None:
         return None, "⚠  No input provided. Draw on the canvas or upload a sketch (.png, .jpg, .jpeg)."
 
     if not _PREPROCESSING_AVAILABLE:
-        return None, (
-            "⚠  Preprocessing engine unavailable. "
-            "Ensure engine/preprocessing.py is importable."
-        )
+        return None, "⚠  Preprocessing engine unavailable. Ensure engine/preprocessing.py is importable."
 
     try:
         result_np: np.ndarray = preprocess(source, return_tensor=False)
         preview = Image.fromarray(result_np)
-        logger.info("UI: Preprocessing complete — shape %s", result_np.shape)
         return preview, "✔  Preprocessing complete. Ready for AI generation."
-    except Exception as exc:  # noqa: BLE001
-        logger.error("UI: Preprocessing error: %s", exc, exc_info=True)
+    except Exception as exc:
         return None, f"✘  Preprocessing failed: {exc}"
 
-
 def _run_ai_generation(
-    prompt: str,
-    controlnet_scale: float,
-    num_inference_steps: int,
-    seed: int,
-) -> Tuple[Optional[Image.Image], str]:
-    """
-    Stage 2 handler: invoke Mona's AI engine to produce a depth/normal map.
-    """
-    logger.info(
-        "UI: AI generation requested — prompt=%r  scale=%.2f  steps=%d  seed=%d",
-        prompt, controlnet_scale, num_inference_steps, seed,
-    )
-    if not _AI_ENGINE_AVAILABLE:
-        return None, "[!] AI engine unavailable. Ensure engine/ai_engine.py is importable."
-    try:
-        sketch = np.zeros((512, 512, 3), dtype=np.uint8)
-        result = _ai_engine.generate(
-            sketch_input=sketch,
-            prompt=prompt,
-            controlnet_scale=controlnet_scale,
-            num_inference_steps=int(num_inference_steps),
-            seed=int(seed) if seed != -1 else None,
-        )
-        _SESSION["current_mesh"] = result.mesh
-        _SESSION["last_result"] = result
-        depth_img = result.depth_image
-        status = (
-            f"[OK] Generation complete — seed={result.seed} "
-            f"latency={result.elapsed_total:.2f}s "
-            f"watertight={result.is_watertight}"
-        )
-        logger.info("UI: %s", status)
-        return depth_img, status
-    except Exception as exc:  # noqa: BLE001
-        logger.error("UI: AI generation error: %s", exc, exc_info=True)
-        return None, f"[ERR] AI generation failed: {exc}"
+    prompt: str = "",
+    controlnet_scale: float = 0.85,
+    num_inference_steps: int = 30,
+    seed: int = -1,
+    canvas_image: Optional[np.ndarray] = None,
+    uploaded_file: Optional[str] = None,
+    canvas_data_url: Optional[str] = None,
+    preprocessed_preview: Optional[Image.Image] = None,
+    progress: gr.Progress = gr.Progress(track_tqdm=True),
+) -> Tuple[Optional[Image.Image], Optional[str], str, str]:
+    global _LAST_GENERATED_MESH
 
+    source = None
+    if preprocessed_preview is not None:
+        source = preprocessed_preview
+    else:
+        source = _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+
+    if source is None:
+        return None, None, "⚠  No input sketch provided. Draw on canvas or upload an image.", ""
+
+    if not _PIPELINE_AVAILABLE:
+        return None, None, "⚠  AI Pipeline backend unavailable.", ""
+
+    try:
+        progress(0.1, desc="Ingesting & preprocessing sketch...")
+        pipeline = Sketch2ShapePipeline()
+
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        export_glb_path = outputs_dir / "sketch2shape_generated.glb"
+
+        progress(0.35, desc="Running diffusion generator...")
+        result: GenerationResult = pipeline.run(
+            sketch_source=source,
+            prompt=prompt,
+            controlnet_scale=float(controlnet_scale),
+            num_inference_steps=int(num_inference_steps),
+            seed=int(seed),
+            export_path=export_glb_path,
+            export_format="glb",
+        )
+
+        progress(0.85, desc="Reconstructing 3D watertight mesh...")
+        _LAST_GENERATED_MESH = result.mesh
+
+        depth_preview = None
+        if result.depth_map is not None:
+            depth_scaled = (result.depth_map * 255.0).clip(0, 255).astype(np.uint8)
+            depth_preview = Image.fromarray(depth_scaled)
+        elif result.generated_image is not None:
+            depth_preview = result.generated_image
+
+        progress(1.0, desc="Rendering asset in WebGL previewer...")
+        status_msg = (
+            f"✔ Generated watertight 3D asset in {result.latency_seconds:.2f}s | "
+            f"Faces: {len(result.mesh.faces):,} | "
+            f"Vertices: {len(result.mesh.vertices):,} | "
+            f"VRAM Peak: {result.vram_peak_mb:.1f} MB | "
+            f"Seed: {result.seed_used}"
+        )
+        glb_url = f"/file={export_glb_path.as_posix()}"
+
+        return depth_preview, str(export_glb_path), status_msg, glb_url
+
+    except Exception as exc:
+        logger.error("UI Generation Pipeline Error: %s", exc, exc_info=True)
+        return None, None, f"✘  Generation failed: {exc}", ""
 
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
-    """
-    Stage 3 handler: serialise the current in-memory mesh to the chosen format.
-    """
-    logger.info("UI: Mesh export requested — format=%s", export_format)
-    mesh = _SESSION.get("current_mesh")
-    if mesh is None:
-        return None, "[!] No mesh in session. Run AI generation first."
-    try:
-        ext_map = {"OBJ": ".obj", "GLB": ".glb", "STL": ".stl", "PLY": ".ply"}
-        ext = ext_map.get(export_format.upper(), ".obj")
-        tmp = tempfile.NamedTemporaryFile(
-            delete=False, suffix=ext, prefix="sketch2shape_",
-        )
-        tmp.close()
-        mesh.export(tmp.name, file_type=export_format.lower())
-        status = f"[OK] Exported {export_format} mesh to {tmp.name}"
-        logger.info("UI: %s", status)
-        return tmp.name, status
-    except Exception as exc:  # noqa: BLE001
-        logger.error("UI: Mesh export error: %s", exc, exc_info=True)
-        return None, f"[ERR] Mesh export failed: {exc}"
+    global _LAST_GENERATED_MESH
 
+    fmt = export_format.lower()
+    outputs_dir = Path("outputs")
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    out_path = outputs_dir / f"sketch2shape_asset.{fmt}"
+
+    if _LAST_GENERATED_MESH is not None:
+        try:
+            if hasattr(_LAST_GENERATED_MESH, "export"):
+                _LAST_GENERATED_MESH.export(str(out_path), file_type=fmt)
+                return str(out_path), f"✔  Exported active mesh to {export_format.upper()}: {out_path.name}"
+        except Exception as exc:
+            return None, f"✘  Export failed: {exc}"
+
+    glb_file = outputs_dir / "sketch2shape_generated.glb"
+    if glb_file.exists() and fmt == "glb":
+        return str(glb_file), f"✔  Exported {glb_file.name}"
+
+    return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
 
 def _clear_session() -> Tuple:
-    """Reset all interactive components to their initial states (exact 7-tuple)."""
-    logger.info("UI: Session cleared by user")
+    global _LAST_GENERATED_MESH
+    _LAST_GENERATED_MESH = None
     return (
-        None,   # canvas
-        None,   # file uploader
-        "",     # prompt
-        None,   # preprocessed preview
-        None,   # depth preview
-        None,   # export file
-        "",     # status
+        None,
+        None,
+        "",
+        None,
+        None,
+        None,
+        "",
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Gradio UI Definition
-# ─────────────────────────────────────────────────────────────────────────────
-
 def build_ui() -> gr.Blocks:
-    """
-    Construct and return the Gradio Blocks application.
-
-    The layout follows a dual-viewport grid:
-      - Left panel  : HTML5 drawing canvas, file uploader (.png/jpg/jpeg), prompt, pipeline params
-      - Right panel : WebGL 3D previewer + preprocessed image + export controls
-    """
     with gr.Blocks(
         title=APP_TITLE,
         theme=gr.themes.Default(
@@ -767,10 +564,7 @@ def build_ui() -> gr.Blocks:
             font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"],
         ),
         css="""
-        /* ── Global resets ────────────────────────────────────────── */
         .gradio-container { max-width: 1440px !important; margin: 0 auto; }
-
-        /* ── Section labels ───────────────────────────────────────── */
         .panel-header {
             font-size: 11px;
             font-weight: 600;
@@ -781,11 +575,7 @@ def build_ui() -> gr.Blocks:
             border-bottom: 1px solid var(--border-color-primary);
             margin-bottom: 8px;
         }
-
-        /* ── Compact accordion ────────────────────────────────────── */
         .compact-accordion .label-wrap { padding: 6px 10px !important; }
-
-        /* ── Status bar ───────────────────────────────────────────── */
         .status-bar textarea {
             font-family: var(--font-mono) !important;
             font-size: 12px !important;
@@ -794,24 +584,26 @@ def build_ui() -> gr.Blocks:
             border: none !important;
             resize: none !important;
         }
-
-        /* ── Export button row ────────────────────────────────────── */
         .export-row button { font-size: 12px !important; }
         """,
     ) as app:
 
-        # Hidden holder for HTML5 canvas data URL synchronization
         canvas_data_holder = gr.Textbox(
             visible=False,
             elem_id="canvas-data-holder",
             label="Internal Canvas Buffer",
         )
 
-        # ── Header ────────────────────────────────────────────────────────────
+        glb_url_holder = gr.Textbox(
+            visible=False,
+            elem_id="s2s-glb-output-url",
+            label="Internal GLB URL Buffer",
+        )
+
         with gr.Row(elem_classes=["header-row"]):
             gr.Markdown(
                 f"""
-                ## {APP_TITLE}
+                <h2>{APP_TITLE}</h2>
                 Sketch → Diffusion → 3D Mesh &nbsp;·&nbsp;
                 TechZephyr 4.0 · IIT Bhubaneswar &nbsp;·&nbsp;
                 `v{APP_VERSION}`
@@ -821,17 +613,11 @@ def build_ui() -> gr.Blocks:
 
         gr.Markdown("---")
 
-        # ── Main dual-viewport grid ───────────────────────────────────────────
         with gr.Row(equal_height=False):
-
-            # ── LEFT PANEL · Input Controls ───────────────────────────────────
             with gr.Column(scale=1, min_width=380):
                 gr.HTML('<p class="panel-header">Sketch Input</p>')
-
-                # Functional HTML5 Drawing Canvas Component with Toolbar
                 gr.HTML(_HTML5_CANVAS_HTML, elem_id="html5-canvas-root")
 
-                # Alternative / Legacy Sketchpad in a compact accordion (retains gr.Sketchpad in Blocks)
                 with gr.Accordion(
                     label="Alternative / Fallback Sketchpad",
                     open=False,
@@ -845,10 +631,8 @@ def build_ui() -> gr.Blocks:
                         height=260,
                     )
 
-                gr.HTML('<div style="margin: 6px 0 4px; font-size: 11px; '
-                        'color: var(--body-text-color-subdued); text-align: center;">— or upload sketch / photo —</div>')
+                gr.HTML('<div style="margin: 6px 0 4px; font-size: 11px; color: var(--body-text-color-subdued); text-align: center;">— or upload sketch / photo —</div>')
 
-                # Drag-and-drop file uploader zone accepting .png, .jpg, .jpeg
                 file_upload = gr.File(
                     label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
                     file_types=SUPPORTED_UPLOAD_EXTENSIONS,
@@ -856,19 +640,14 @@ def build_ui() -> gr.Blocks:
                     elem_id="file-uploader",
                 )
 
-                # Text input field for optional material/style prompts
                 prompt_input = gr.Textbox(
                     label="Material / Style Prompt (Optional)",
-                    placeholder=(
-                        'e.g. "matte porcelain finish", "brushed aluminum alloy", '
-                        '"weathered terracotta" · leave blank for shape-only mode'
-                    ),
+                    placeholder='e.g. "matte porcelain finish", "brushed aluminum alloy", "weathered terracotta"',
                     lines=2,
                     max_lines=4,
                     elem_id="prompt-input",
                 )
 
-                # Pipeline parameters
                 with gr.Accordion(
                     label="Pipeline Parameters",
                     open=False,
@@ -878,9 +657,9 @@ def build_ui() -> gr.Blocks:
                         label="ControlNet Conditioning Scale",
                         minimum=0.0,
                         maximum=2.0,
-                        value=1.0,
+                        value=0.85,
                         step=0.05,
-                        info="Strength of sketch conditioning. 0.8–1.2 recommended.",
+                        info="Strength of sketch conditioning. 0.70–0.95 recommended.",
                     )
                     inference_steps = gr.Slider(
                         label="Denoising Steps",
@@ -897,7 +676,6 @@ def build_ui() -> gr.Blocks:
                         info="-1 = random seed.",
                     )
 
-                # Action buttons
                 with gr.Row():
                     btn_preprocess = gr.Button(
                         "① Preprocess",
@@ -905,7 +683,7 @@ def build_ui() -> gr.Blocks:
                         size="sm",
                     )
                     btn_generate = gr.Button(
-                        "② Generate 3D",
+                        "Generate 3D Asset",
                         variant="primary",
                         size="sm",
                     )
@@ -915,14 +693,10 @@ def build_ui() -> gr.Blocks:
                         size="sm",
                     )
 
-            # ── RIGHT PANEL · Output & WebGL Viewer ───────────────────────────
             with gr.Column(scale=1, min_width=380):
                 gr.HTML('<p class="panel-header">3D WebGL Asset Preview</p>')
-
-                # WebGL 3D Previewer powered by Three.js / ui/viewer.js
                 gr.HTML(_WEBGL_VIEWER_HTML, elem_id="webgl-viewport")
 
-                # Preprocessed lineart image result
                 preprocessed_view = gr.Image(
                     label="Preprocessed / Lineart Preview",
                     type="pil",
@@ -931,9 +705,8 @@ def build_ui() -> gr.Blocks:
                     height=180,
                 )
 
-                # Depth / normal map from AI engine (Mona)
                 depth_view = gr.Image(
-                    label="Depth / Normal Map  [AI Engine Output]",
+                    label="Depth / Normal Map [AI Engine Output]",
                     type="pil",
                     interactive=False,
                     show_download_button=True,
@@ -941,7 +714,6 @@ def build_ui() -> gr.Blocks:
                     visible=True,
                 )
 
-                # ── Export controls ────────────────────────────────────────────
                 gr.HTML('<p class="panel-header" style="margin-top: 8px;">Mesh Export & Downloads</p>')
 
                 with gr.Row(elem_classes=["export-row"]):
@@ -964,7 +736,6 @@ def build_ui() -> gr.Blocks:
                     visible=True,
                 )
 
-        # ── Status bar (full width, below grid) ───────────────────────────────
         status_bar = gr.Textbox(
             label="Pipeline Status",
             value="Ready.",
@@ -974,10 +745,6 @@ def build_ui() -> gr.Blocks:
             max_lines=2,
         )
 
-        # ─────────────────────────────────────────────────────────────────────
-        # Event wiring
-        # ─────────────────────────────────────────────────────────────────────
-
         btn_preprocess.click(
             fn=_run_preprocessing,
             inputs=[canvas, file_upload, canvas_data_holder],
@@ -986,8 +753,18 @@ def build_ui() -> gr.Blocks:
 
         btn_generate.click(
             fn=_run_ai_generation,
-            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input],
-            outputs=[depth_view, status_bar],
+            inputs=[
+                prompt_input,
+                controlnet_scale,
+                inference_steps,
+                seed_input,
+                canvas,
+                file_upload,
+                canvas_data_holder,
+                preprocessed_view,
+            ],
+            outputs=[depth_view, export_file, status_bar, glb_url_holder],
+            _js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('AI Engine generating 3D asset...', 20); } }",
         )
 
         btn_export.click(
@@ -1013,19 +790,14 @@ def build_ui() -> gr.Blocks:
 
     return app
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=f"{APP_TITLE} UI")
-    parser.add_argument("--host",   default="127.0.0.1", help="Bind host")
-    parser.add_argument("--port",   type=int, default=7860, help="Bind port")
-    parser.add_argument("--share",  action="store_true",   help="Create public Gradio share link")
-    parser.add_argument("--debug",  action="store_true",   help="Enable Gradio debug mode")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    parser.add_argument("--port", type=int, default=7860, help="Bind port")
+    parser.add_argument("--share", action="store_true", help="Create public Gradio share link")
+    parser.add_argument("--debug", action="store_true", help="Enable Gradio debug mode")
     args = parser.parse_args()
 
     logger.info("Starting %s v%s", APP_TITLE, APP_VERSION)
@@ -1037,5 +809,5 @@ if __name__ == "__main__":
         share=args.share,
         debug=args.debug,
         show_error=True,
-        allowed_paths=["ui"],
+        allowed_paths=["ui", "outputs"],
     )
