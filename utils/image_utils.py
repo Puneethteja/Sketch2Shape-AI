@@ -31,7 +31,6 @@ __all__ = [
     "draw_overlay_mask",
 ]
 
-
 def save_image(
     img: np.ndarray,
     path: Union[str, Path],
@@ -78,7 +77,6 @@ def save_image(
     logger.debug("save_image: wrote %s  shape=%s", out.name, img.shape)
     return out
 
-
 def load_pil(path: Union[str, Path]) -> Image.Image:
     """
     Load an image from disk as a Pillow ``Image`` (RGB mode).
@@ -106,7 +104,6 @@ def load_pil(path: Union[str, Path]) -> Image.Image:
     img = ImageOps.exif_transpose(img)
     return img.convert("RGB")
 
-
 def ndarray_to_pil(arr: np.ndarray) -> Image.Image:
     """
     Convert a ``uint8`` NumPy array (H×W×3 RGB or H×W grayscale) to a
@@ -129,7 +126,6 @@ def ndarray_to_pil(arr: np.ndarray) -> Image.Image:
         return Image.fromarray(arr, mode="RGBA")
     raise ValueError(f"ndarray_to_pil: unsupported array shape {arr.shape}")
 
-
 def pil_to_ndarray(img: Image.Image) -> np.ndarray:
     """
     Convert a Pillow Image to a ``uint8`` NumPy array.
@@ -145,7 +141,6 @@ def pil_to_ndarray(img: Image.Image) -> np.ndarray:
         Shape (H, W) for grayscale or (H, W, C) for colour.
     """
     return np.array(img)
-
 
 def stack_side_by_side(
     left: np.ndarray,
@@ -174,7 +169,7 @@ def stack_side_by_side(
     np.ndarray
         Concatenated image of shape ``(max_h, left_w + gap + right_w, 3)``.
     """
-    # Handle grayscale inputs — convert to 3-ch for consistent output
+
     def _ensure_rgb(img: np.ndarray) -> np.ndarray:
         if img.ndim == 2:
             return np.stack([img] * 3, axis=-1)
@@ -202,7 +197,6 @@ def stack_side_by_side(
 
     separator = np.full((max_h, gap, 3), gap_color, dtype=np.uint8)
     return np.concatenate([left, separator, right], axis=1)
-
 
 def draw_overlay_mask(
     base: np.ndarray,
