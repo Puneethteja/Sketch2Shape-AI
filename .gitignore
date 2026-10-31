@@ -85,3 +85,4 @@ htmlcov/
 
 # ── rembg / u2net download cache ─────────────
 u2net/
+outputs/*.stl

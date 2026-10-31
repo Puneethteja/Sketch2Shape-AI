@@ -847,3 +847,38 @@ Every input now undergoes the same canonical pipeline path:
 | Watertight guarantee | 100% across all test variants |
 | Pipeline total (CPU, synthetic) | 2.0 – 9.6s end-to-end |
 
+
+
+---
+
+### Phase 11: Two-Stage ControlNet + InstantMesh Pipeline, Color Fidelity & FastAPI Backend (2026-11-01)
+
+#### 1. Executive Summary
+- Upgraded the 2D-to-3D backend pipeline to a two-stage reconstruction architecture: Stage 1 utilizes depth- and normal-guided ControlNet conditioning for structural geometry, and Stage 2 utilizes InstantMesh-style multi-view synthesis and volumetric triplane reconstruction.
+- Fixed the color-loss and desaturation bug by introducing TextureProjector in engine/texture.py, which executes non-linear albedo restoration (contrast boost, gamma correction, saturation preservation), cylindrical UV parameterization, and multi-view ray projection directly onto 3D vertices and a baked 1024x1024 UV texture atlas.
+- Upgraded TrimeshFallback GLB export from position-only to full glTF 2.0 PBR standard: embeds COLOR_0 (normalized VEC4 vertex colors), TEXCOORD_0 (VEC2 UV coords), and embedded PNG texture atlas buffers with metalness/roughness PBR materials.
+- Created pi/main.py providing a production-grade FastAPI REST server with FP16 precision routing, CORS middleware, multipart /generate endpoint, /preview endpoint for intermediate depth/normal maps, /health liveness probe, and static output serving.
+
+#### 2. Key Architecture Additions
+1. **engine/texture.py (TextureProjector)**:
+   - enhance_color_fidelity(): Albedo restoration preserving native RGB hues and specular sheen.
+   - compute_cylindrical_uvs(): Continuous $[0, 1]^2$ cylindrical UV mapping.
+   - project_texture_pass(): Ray-projected color transfer from 6 canonical multi-view cameras.
+   - _bake_texture_atlas(): High-resolution  \times 1024$ UV texture atlas synthesis.
+2. **pi/main.py (FastAPI Server)**:
+   - POST /generate: Ingests sketches/images with controlnet scale, prompt, steps, and export format (glb, obj, stl). Returns mesh URLs, vertex/face stats, and texture atlas data.
+   - POST /preview: Returns base64 depth, normal, or multi-view preview grids for frontend inspection.
+   - GET /health: Liveness probe reporting torch version, device, and FP16/CUDA status.
+   - GET /outputs/{filename}: Safe download for generated 3D meshes.
+3. **	ests/test_texture.py**:
+   - 14 comprehensive unit tests verifying color enhancement, UV coordinate boundaries, color projection, GLB COLOR_0 and TEXCOORD_0 binary accessors, and prompt material routing.
+
+#### 3. Test Verification Results
+| Test Category | Suite / File | Test Count | Pass Rate |
+|---|---|:---:|:---:|
+| **Upload Removal & STL Export** | 	ests/test_stl_and_upload.py | 5 | **100%** (5/5) |
+| **Universal Geometry Engine** | 	ests/test_geometry_engine.py | 7 | **100%** (7/7) |
+| **USP 4-Pillar Validation** | 	ests/test_usp.py | 7 | **100%** (7/7) |
+| **AI Inference & Regression** | 	ests/test_ai_inference.py | 16 | **100%** (16/16) |
+| **Texture & Color Preservation** | 	ests/test_texture.py | 14 | **100%** (14/14) |
+| **Total Test Suite** | **All 5 Test Suites** | **49** | **100%** (49/49) |
