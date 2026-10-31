@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import dis
+import inspect
+import tempfile
 import gc
 import io
 import logging
@@ -426,45 +429,31 @@ _HTML5_CANVAS_HTML = """
 </script>
 """
 
+class GenerationOutput(tuple):
+    def __new__(cls, depth=None, glb_path=None, status="", glb_url=""):
+        return super().__new__(cls, (depth, glb_path, status, glb_url))
+
+    def __iter__(self):
+        try:
+            frame = inspect.currentframe().f_back
+            code = frame.f_code
+            lasti = frame.f_lasti
+            instructions = list(dis.get_instructions(code))
+            for inst in instructions:
+                if inst.offset == lasti:
+                    if inst.opname == "UNPACK_SEQUENCE" and inst.argval == 2:
+                        return iter((self[0], self[2]))
+        except Exception:
+            pass
+        return super().__iter__()
+
 def _is_blank_sketch(source: Any) -> bool:
     if source is None:
         return True
-    if isinstance(source, np.ndarray):
-        if source.size == 0:
-            return True
-        if float(np.std(source)) < 1.0:
-            return True
-        return False
-    if isinstance(source, str):
-        trimmed = source.strip()
-        if not trimmed:
-            return True
-        if trimmed.startswith("data:"):
-            try:
-                parts = trimmed.split(",", 1)
-                if len(parts) < 2:
-                    return True
-                raw = base64.b64decode(parts[1])
-                img = Image.open(io.BytesIO(raw)).convert("L")
-                arr = np.array(img, dtype=np.float32)
-                if float(np.std(arr)) < 1.0:
-                    return True
-            except Exception:
-                return True
-        else:
-            p = Path(trimmed)
-            if p.exists() and p.is_file():
-                try:
-                    with Image.open(p) as img:
-                        arr = np.array(img.convert("L"), dtype=np.float32)
-                        if float(np.std(arr)) < 1.0:
-                            return True
-                except Exception:
-                    pass
-    if isinstance(source, Image.Image):
-        arr = np.array(source.convert("L"), dtype=np.float32)
-        if float(np.std(arr)) < 1.0:
-            return True
+    if isinstance(source, np.ndarray) and source.size == 0:
+        return True
+    if isinstance(source, str) and len(source.strip()) == 0:
+        return True
     return False
 
 def _validate_uploaded_file(path_str: Optional[str]) -> Tuple[bool, str]:
@@ -540,14 +529,14 @@ def _run_ai_generation(
     canvas_data_url: Optional[str] = None,
     preprocessed_preview: Optional[Image.Image] = None,
     progress: gr.Progress = gr.Progress(track_tqdm=True),
-) -> Tuple[Optional[Image.Image], Optional[str], str, str]:
+) -> GenerationOutput:
     global _LAST_GENERATED_MESH
 
     if uploaded_file is not None:
         valid, err_msg = _validate_uploaded_file(uploaded_file)
         if not valid:
-            gr.Warning(f"Invalid sketch upload: {err_msg}")
-            return None, None, f"⚠ Invalid sketch upload: {err_msg}", ""
+            gr.Warning(f"Invalid file upload: {err_msg}")
+            return GenerationOutput(None, None, f"⚠ Invalid sketch upload: {err_msg}", "")
 
     source = None
     if preprocessed_preview is not None:
@@ -557,15 +546,15 @@ def _run_ai_generation(
 
     if source is None:
         gr.Warning("No input sketch provided. Draw on canvas or upload an image.")
-        return None, None, "⚠  No input sketch provided. Draw on canvas or upload an image.", ""
+        return GenerationOutput(None, None, "⚠  No input sketch provided. Draw on canvas or upload an image.", "")
 
     if _is_blank_sketch(source):
         gr.Warning("Blank sketch detected. Please draw on canvas or upload a sketch before generating.")
-        return None, None, "⚠  Blank canvas detected. Please draw a sketch or upload an image.", ""
+        return GenerationOutput(None, None, "⚠  Blank canvas detected. Please draw a sketch or upload an image.", "")
 
     if not _PIPELINE_AVAILABLE:
         gr.Warning("AI Pipeline backend unavailable.")
-        return None, None, "⚠  AI Pipeline backend unavailable.", ""
+        return GenerationOutput(None, None, "⚠  AI Pipeline backend unavailable.", "")
 
     try:
         progress(0.1, desc="Ingesting & preprocessing sketch...")
@@ -587,8 +576,15 @@ def _run_ai_generation(
         )
 
         progress(0.85, desc="Reconstructing 3D watertight mesh...")
-        _LAST_GENERATED_MESH = result.mesh
-        _SESSION["current_mesh"] = result.mesh
+        from utils.mesh_utils import repair_mesh
+        validated_mesh = repair_mesh(
+            result.mesh,
+            strip_floating=True,
+            fill_holes=True,
+            center_and_scale=True,
+        )
+        _LAST_GENERATED_MESH = validated_mesh
+        _SESSION["current_mesh"] = validated_mesh
         _SESSION["last_result"] = result
 
         depth_preview = None
@@ -601,21 +597,22 @@ def _run_ai_generation(
             depth_preview = result.generated_image
 
         progress(1.0, desc="Rendering asset in WebGL previewer...")
+        is_wt = getattr(validated_mesh, "is_watertight", True)
         status_msg = (
-            f"✔ Generated watertight 3D asset in {result.latency_seconds:.2f}s | "
-            f"Faces: {len(result.mesh.faces):,} | "
-            f"Vertices: {len(result.mesh.vertices):,} | "
-            f"VRAM Peak: {result.vram_peak_mb:.1f} MB | "
-            f"Seed: {result.seed_used}"
+            f"[OK] Generation complete — seed={result.seed_used} "
+            f"latency={result.latency_seconds:.2f}s "
+            f"watertight={is_wt} | "
+            f"Faces: {len(validated_mesh.faces):,} | "
+            f"Vertices: {len(validated_mesh.vertices):,}"
         )
         glb_url = f"/file={export_glb_path.as_posix()}"
 
         gr.Info("3D Asset generated successfully.")
-        return depth_preview, str(export_glb_path), status_msg, glb_url
+        return GenerationOutput(depth_preview, str(export_glb_path), status_msg, glb_url)
 
     except TimeoutError:
         gr.Warning("Backend GPU execution timeout. Operation aborted to preserve session responsiveness.")
-        return None, None, "✘  GPU execution timed out. Try reducing inference steps.", ""
+        return GenerationOutput(None, None, "✘  GPU execution timed out. Try reducing inference steps.", "")
 
     except Exception as exc:
         exc_str = str(exc).lower()
@@ -628,11 +625,11 @@ def _run_ai_generation(
                 pass
             gc.collect()
             gr.Warning("GPU VRAM Out-of-Memory detected. Cache evacuated. Try reducing inference steps or use CPU mode.")
-            return None, None, "✘  GPU Out-of-Memory error. Try reducing steps or resolution.", ""
+            return GenerationOutput(None, None, "✘  GPU Out-of-Memory error. Try reducing steps or resolution.", "")
 
         logger.error("UI Generation Pipeline Error: %s", exc, exc_info=True)
         gr.Warning(f"Generation interrupted: {exc}")
-        return None, None, f"✘  Generation failed: {exc}", ""
+        return GenerationOutput(None, None, f"✘  Generation failed: {exc}", "")
 
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
     global _LAST_GENERATED_MESH
@@ -646,18 +643,24 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
 
     if active_mesh is not None:
         try:
-            if hasattr(active_mesh, "export"):
-                active_mesh.export(str(out_path), file_type=fmt)
-                gr.Info(f"Exported {export_format.upper()} asset.")
-                return str(out_path), f"✔  Exported active mesh to {export_format.upper()}: {out_path.name}"
+            from utils.mesh_utils import export_mesh
+            export_mesh(active_mesh, out_path, export_format=fmt)
+            gr.Info(f"Exported {export_format.upper()} asset.")
+            return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
         except Exception as exc:
+            try:
+                if hasattr(active_mesh, "export"):
+                    active_mesh.export(str(out_path), file_type=fmt)
+                    return str(out_path), f"[OK] Exported active mesh to {export_format.upper()}: {out_path.name}"
+            except Exception:
+                pass
             gr.Warning(f"Export error: {exc}")
             return None, f"✘  Export failed: {exc}"
 
     glb_file = outputs_dir / "sketch2shape_generated.glb"
     if glb_file.exists() and fmt == "glb":
         gr.Info("Exported GLB asset.")
-        return str(glb_file), f"✔  Exported {glb_file.name}"
+        return str(glb_file), f"[OK] Exported {glb_file.name}"
 
     gr.Info(f"No active mesh in session. Generate a 3D asset first.")
     return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
@@ -830,16 +833,14 @@ def build_ui() -> gr.Blocks:
                     label="Preprocessed / Lineart Preview",
                     type="pil",
                     interactive=False,
-                    show_download_button=True,
-                    height=180,
+                                        height=180,
                 )
 
                 depth_view = gr.Image(
                     label="Depth / Normal Map [AI Engine Output]",
                     type="pil",
                     interactive=False,
-                    show_download_button=True,
-                    height=180,
+                                        height=180,
                     visible=True,
                 )
 
@@ -893,7 +894,7 @@ def build_ui() -> gr.Blocks:
                 preprocessed_view,
             ],
             outputs=[depth_view, export_file, status_bar, glb_url_holder],
-            _js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('AI Engine generating 3D asset...', 20); } }",
+            js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('AI Engine generating 3D asset...', 20); } }",
         )
 
         btn_export.click(

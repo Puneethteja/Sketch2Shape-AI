@@ -319,7 +319,10 @@ class MeshReconstructor:
 
         if TRIMESH_AVAILABLE:
             m = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-            m.is_watertight = True
+            try:
+                m.is_watertight = True
+            except (AttributeError, TypeError):
+                pass
             return m
         return TrimeshFallback(vertices=verts, faces=faces, is_watertight=True)
 
