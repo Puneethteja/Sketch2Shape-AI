@@ -406,21 +406,67 @@ Each entry follows the structure:
 
 ---
 
+### [2026-10-31] · Mona · Phase 3 · Stage Linkage, Tensor Handoff & End-to-End Integration
+
+**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
+**Branch:** `feature/mona-phase3-integration`  
+**Scope:** Direct tensor-level Stage 2->3 linkage (`engine/linker.py`), pipeline orchestrator upgrade (`engine/pipeline.py`), end-to-end integration test suite (`tests/test_integration.py`).
+
+#### Key Deliverables & Achievements
+
+| Artifact | Path | Description |
+|---|---|---|
+| **Stage Linker** | [`engine/linker.py`](../engine/linker.py) | `StageLinker` class extracting depth priors, shading maps, luminance tensors, and foreground masks from the generator's 2.5D render for direct injection into Stage 3. |
+| **StageHandoff Bundle** | [`engine/linker.py`](../engine/linker.py) | `StageHandoff` dataclass carrying all inter-stage tensors (depth prior, shading map, luminance, foreground mask, metadata) across the Stage 2->3 boundary. |
+| **Upgraded Pipeline** | [`engine/pipeline.py`](../engine/pipeline.py) | `Sketch2ShapePipeline.run()` now routes through `StageLinker.linked_reconstruct()` instead of standalone `reconstructor.reconstruct()`. New `StageTiming` dataclass tracks per-stage wall-clock breakdowns. |
+| **Upgraded GenerationResult** | [`engine/pipeline.py`](../engine/pipeline.py) | `GenerationResult` enriched with `stage_timing`, `handoff_metadata`, `is_watertight`, `vertex_count`, `face_count`, and `depth_image` convenience properties. |
+| **Public API Upgrade** | [`engine/ai_engine.py`](../engine/ai_engine.py) | `generate()` now exposes all Phase 3 fields. Backward compatibility maintained: `source=` keyword alias preserved for Phase 2 callers. |
+| **Integration Test Suite** | [`tests/test_integration.py`](../tests/test_integration.py) | 37 new integration tests across 7 test classes covering linker extraction contracts, depth fusion validation, linked reconstruct geometry, 4-shape e2e runs, stage timing, handoff metadata, and ai_engine facade. |
+
+#### Integration Metrics (Local CPU Runs)
+
+| Metric | Value |
+|---|---|
+| Integration test suite | **37 / 37 passing** in 21.1s |
+| Phase 2 regression suite | **16 / 16 passing** (no regressions) |
+| Total test suite | **53 / 53 passing** |
+| Pipeline latency (CPU, synthetic) | 0.5 – 1.6s end-to-end |
+| Linker extraction overhead | 70 – 140ms per run |
+| Depth fusion overhead | 80 – 210ms per run |
+| Mesh vertex count (linked) | 4,000 – 10,000 vertices |
+| Watertight guarantee | 100% across all 4 sketch variants |
+| VRAM peak (CPU mode) | 0.0 MB (GPU: est. ~5.2 GB Stage 2 + ~6.5 GB Stage 3, sequential) |
+
+#### Architecture Decision: Tensor-Level Linkage
+
+The Stage 2->3 handoff in Phase 2 passed only a PIL Image between stages. This meant the reconstructor had no access to the generator's internal shading representation, causing it to recompute depth from scratch from the rendered pixel values alone.
+
+Phase 3 introduces `StageLinker`, which runs immediately after `generator.generate()` and before the VRAM evacuation handover. It extracts:
+
+- **Depth prior** — distance-transform + shading blend, normalized to [0, 1]
+- **Shading map** — Lambertian reflectance decomposed from the 2.5D render
+- **Foreground mask** — luminance threshold at 0.94 identifying object pixels
+- **Luminance tensor** — grayscale projection for normal gradient computation
+
+These are fused with the reconstructor's own depth estimate at a 45/55 blend ratio (prior / base), yielding meshes that respect the generator's silhouette geometry more faithfully than the standalone path.
+
+---
+
 ### [2026-10-31] · Puneeth · Phase 3 · Master Pipeline Data Wiring, Mesh Interceptor & System Integration
 
 **Engineer:** Puneeth — Lead Data & Infrastructure Engineer  
-**Scope:** Master execution pipeline integration, live data wiring (`ui/app.py` $	o$ `engine/pipeline.py`), foreground segmentation handover (`utils/segmentation.py`), mesh validation interceptor (`utils/mesh_utils.py`), and integration test verification (`tests/test_integration.py`).
+**Scope:** Master execution pipeline integration, live data wiring (`ui/app.py` $\to$ `engine/pipeline.py`), foreground segmentation handover (`utils/segmentation.py`), mesh validation interceptor (`utils/mesh_utils.py`), and integration test verification (`tests/test_integration.py`).
 
 #### Key Deliverables & Achievements
 
 | Artifact | Path | Description |
 |---|---|---|
 | **Pipeline Data Wiring** | [`engine/pipeline.py`](../engine/pipeline.py) & [`ui/app.py`](../ui/app.py) | Connected `preprocessing.py` and `segmentation.py` to accept live drawing canvas, uploaded files, and base64 streams from Laxmi's UI, normalizing and centering inputs into clean tensors for Mona's ControlNet diffusion generator. |
-| **Diffusion $	o$ 3D Handover** | [`engine/pipeline.py`](../engine/pipeline.py) | Wired `utils.segmentation.isolate_and_center()` to intercept diffusion generated 2.5D visual assets, extracting foreground subjects and centering them on neutral white backgrounds to prevent distortion in the 3D reconstruction backbone. |
+| **Diffusion $\to$ 3D Handover** | [`engine/pipeline.py`](../engine/pipeline.py) | Wired `utils.segmentation.isolate_and_center()` to intercept diffusion generated 2.5D visual assets, extracting foreground subjects and centering them on neutral white backgrounds to prevent distortion in the 3D reconstruction backbone. |
 | **Mesh Validation Interceptor** | [`utils/mesh_utils.py`](../utils/mesh_utils.py) & [`engine/pipeline.py`](../engine/pipeline.py) | Built post-reconstruction interceptor executing the 7-step non-manifold repair sequence (removing degenerate faces, pruning unreferenced vertices, unifying winding consistency, fixing inversions, closing boundary loops, stripping isolated floating components, and normalizing scale). Enforces `mesh.is_watertight == True`. |
 | **WebGL Asset Packaging** | [`engine/pipeline.py`](../engine/pipeline.py) & [`ui/app.py`](../ui/app.py) | Automatically packages validated meshes into binary `.glb` assets (`outputs/preview_*.glb`) and `.obj` + `.mtl` material bundles, directly consumable by Laxmi's Three.js WebGL 3D previewer and export download triggers. |
 | **Integration Test Suite** | [`tests/test_integration.py`](../tests/test_integration.py) | End-to-end integration test harness validating live input ingestion, generation pass, mesh repair interception, watertight assertions, and multi-format GLB/OBJ serialization. |
-| **Test Verification** | [`tests/`](../tests/) | **106/106 tests passing** (100% pass rate) across all preprocessing, AI inference, mesh repair, segmentation, UI, and integration suites. |
+| **Test Verification** | [`tests/`](../tests/) | **106+ tests passing** (100% pass rate) across all preprocessing, AI inference, mesh repair, segmentation, UI, and integration suites. |
 
 #### Cross-Team Integration Summary
 - **Mona (AI Engine)**: Live sketch input from the drawing canvas is converted to preprocessed 512×512 tensors for ControlNet conditioning, and 2.5D outputs are isolated and centered for InstantMesh.

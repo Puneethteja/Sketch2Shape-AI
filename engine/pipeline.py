@@ -1,6 +1,7 @@
 """
 engine/pipeline.py
-Unified end-to-end inference pipeline orchestrator.
+Unified end-to-end inference pipeline orchestrator with strict FP16 execution,
+StageLinker tensor handoff, and automated mesh validation interceptor.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.generator import DiffusionConfig, SketchDiffusionGenerator
+from engine.linker import StageHandoff, StageLinker
 from engine.reconstruction import MeshReconstructor, ReconstructionConfig
 from utils.mesh_utils import export_mesh, repair_mesh
 from utils.segmentation import isolate_and_center
@@ -42,6 +44,22 @@ logger = logging.getLogger("sketch2shape.pipeline")
 
 
 @dataclass
+class StageTiming:
+    preprocess: float = 0.0
+    generation: float = 0.0
+    linker_extraction: float = 0.0
+    reconstruction: float = 0.0
+    export: float = 0.0
+
+    @property
+    def total(self) -> float:
+        return round(
+            self.preprocess + self.generation + self.linker_extraction + self.reconstruction + self.export,
+            3,
+        )
+
+
+@dataclass
 class GenerationResult:
     depth_map: np.ndarray
     normal_map: Optional[np.ndarray]
@@ -50,7 +68,34 @@ class GenerationResult:
     vram_peak_mb: float
     generated_image: Optional[Image.Image] = None
     latency_seconds: float = 0.0
+    stage_timing: Optional[StageTiming] = None
+    handoff_metadata: Optional[Dict[str, Any]] = None
     glb_path: Optional[str] = None
+
+    @property
+    def is_watertight(self) -> bool:
+        return bool(getattr(self.mesh, "is_watertight", False))
+
+    @property
+    def vertex_count(self) -> int:
+        return len(self.mesh.vertices) if self.mesh is not None else 0
+
+    @property
+    def face_count(self) -> int:
+        return len(self.mesh.faces) if self.mesh is not None else 0
+
+    @property
+    def depth_image(self) -> Image.Image:
+        depth_uint8 = np.clip(self.depth_map * 255.0, 0, 255).astype(np.uint8)
+        return Image.fromarray(depth_uint8, mode="L").convert("RGB")
+
+    @property
+    def elapsed_total(self) -> float:
+        return self.latency_seconds
+
+    @property
+    def seed(self) -> int:
+        return self.seed_used
 
 
 class Sketch2ShapePipeline:
@@ -60,7 +105,8 @@ class Sketch2ShapePipeline:
         force_cpu: bool = False,
     ) -> None:
         self.device = "cpu" if force_cpu else self._resolve_device(device)
-        logger.info(f"Initialized Sketch2ShapePipeline on device: {self.device}")
+        self._linker = StageLinker(device=self.device)
+        logger.info(f"Initialized Sketch2ShapePipeline on device: {self.device} (StageLinker active)")
 
     def _resolve_device(self, requested_device: Optional[str]) -> str:
         if requested_device:
@@ -103,6 +149,7 @@ class Sketch2ShapePipeline:
     ) -> GenerationResult:
         pipeline_t0 = time.perf_counter()
         self._reset_vram_peak()
+        timing = StageTiming()
 
         logger.info("=" * 70)
         logger.info("Starting Sketch2Shape AI End-to-End Inference Pipeline")
@@ -111,7 +158,8 @@ class Sketch2ShapePipeline:
 
         stage1_t0 = time.perf_counter()
         preprocessed_img = self._preprocess_input(sketch_source)
-        logger.info(f"[Stage 1] Preprocessing completed in {time.perf_counter() - stage1_t0:.3f}s")
+        timing.preprocess = round(time.perf_counter() - stage1_t0, 3)
+        logger.info(f"[Stage 1] Preprocessing completed in {timing.preprocess:.3f}s")
 
         stage2_t0 = time.perf_counter()
         logger.info("[Stage 2] Initializing Diffusion Generator in FP16...")
@@ -132,7 +180,23 @@ class Sketch2ShapePipeline:
             num_inference_steps=num_inference_steps,
             seed=seed,
         )
+        timing.generation = gen_elapsed
         logger.info(f"[Stage 2] Diffusion pass completed in {gen_elapsed:.2f}s | Seed: {concrete_seed}")
+
+        linker_t0 = time.perf_counter()
+        logger.info("[Stage 2->3 Linker] Extracting depth priors and shading tensors...")
+        handoff: StageHandoff = self._linker.extract_handoff_tensors(
+            generated_image=gen_image,
+            seed=concrete_seed,
+            gen_elapsed=gen_elapsed,
+            prompt=prompt or "",
+        )
+        timing.linker_extraction = round(time.perf_counter() - linker_t0, 4)
+        logger.info(
+            f"[Stage 2->3 Linker] Tensor extraction completed in {timing.linker_extraction:.4f}s | "
+            f"FG pixels: {handoff.metadata.get('fg_pixel_count', 0)} | "
+            f"Depth prior max: {handoff.metadata.get('depth_max', 0.0):.3f}"
+        )
 
         logger.info("[Sequential Handover] Evacuating Stage 2 model weights from VRAM...")
         generator.unload()
@@ -149,24 +213,25 @@ class Sketch2ShapePipeline:
 
         try:
             segmented_gen_image = isolate_and_center(gen_image, neutral_background=True)
+            handoff.generated_image = segmented_gen_image
         except Exception as exc:
             logger.warning(f"Foreground segmentation fallback: {exc}")
-            segmented_gen_image = gen_image
 
         stage3_t0 = time.perf_counter()
         logger.info("[Stage 3] Initializing 3D Reconstruction Backbone in FP16...")
 
-        recon_config = ReconstructionConfig(
-            device=self.device,
-        )
+        recon_config = ReconstructionConfig(device=self.device)
         reconstructor = MeshReconstructor(config=recon_config)
 
-        raw_mesh, depth_map, normal_map, recon_elapsed = reconstructor.reconstruct(
-            image_input=segmented_gen_image,
+        raw_mesh, depth_map, normal_map, recon_elapsed = self._linker.linked_reconstruct(
+            reconstructor=reconstructor,
+            handoff=handoff,
         )
+        timing.reconstruction = recon_elapsed
         logger.info(
-            f"[Stage 3] 3D Reconstruction completed in {recon_elapsed:.2f}s | "
-            f"Vertices: {len(raw_mesh.vertices)} | Faces: {len(raw_mesh.faces)}"
+            f"[Stage 3] Linked 3D Reconstruction completed in {recon_elapsed:.2f}s | "
+            f"Vertices: {len(raw_mesh.vertices)} | "
+            f"Faces: {len(raw_mesh.faces)}"
         )
 
         reconstructor.unload()
@@ -200,12 +265,14 @@ class Sketch2ShapePipeline:
             logger.warning(f"Default GLB export warning: {exc}")
 
         if export_path is not None:
+            export_t0 = time.perf_counter()
             out_file = Path(export_path)
             out_file.parent.mkdir(parents=True, exist_ok=True)
             try:
                 export_mesh(watertight_mesh, out_file, export_format=export_format)
             except Exception:
                 watertight_mesh.export(str(out_file), file_type=export_format)
+            timing.export = round(time.perf_counter() - export_t0, 3)
             logger.info(f"[Stage 5] Exported 3D asset to {out_file} (format={export_format.upper()})")
 
         logger.info("=" * 70)
@@ -223,6 +290,8 @@ class Sketch2ShapePipeline:
             vram_peak_mb=peak_vram,
             generated_image=gen_image,
             latency_seconds=total_elapsed,
+            stage_timing=timing,
+            handoff_metadata=handoff.metadata,
             glb_path=glb_path_exported,
         )
 

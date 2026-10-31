@@ -6,8 +6,9 @@ TechZephyr 4.0 Hackathon · IIT Bhubaneswar
 
 from engine.ai_engine import GenerationResult, generate
 from engine.generator import DiffusionConfig, SketchDiffusionGenerator
+from engine.linker import StageHandoff, StageLinker
 from engine.mesh_utils import TrimeshFallback, repair_mesh
-from engine.pipeline import Sketch2ShapePipeline
+from engine.pipeline import Sketch2ShapePipeline, StageTiming
 from engine.reconstruction import MeshReconstructor, ReconstructionConfig
 
 try:
@@ -23,7 +24,10 @@ __all__ = [
     "ReconstructionConfig",
     "TrimeshFallback",
     "repair_mesh",
+    "StageLinker",
+    "StageHandoff",
     "Sketch2ShapePipeline",
+    "StageTiming",
     "GenerationResult",
     "generate",
 ]
