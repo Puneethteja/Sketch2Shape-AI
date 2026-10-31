@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent

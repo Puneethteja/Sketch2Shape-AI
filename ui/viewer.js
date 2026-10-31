@@ -41,6 +41,7 @@
                 cdnThreeUrl: "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
                 cdnControlsUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js",
                 cdnGltfLoaderUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js",
+                cdnStlExporterUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js",
             }, options);
 
             this.activeModel = null;
@@ -257,6 +258,20 @@
                 '<span>Download .GLB</span>';
             downloadBtn.addEventListener("click", () => this.downloadBinary());
             downloadGroup.appendChild(downloadBtn);
+
+            const downloadStlBtn = document.createElement("button");
+            downloadStlBtn.className = "s2s-btn";
+            downloadStlBtn.style.cssText += "background:#1e293b;color:#38bdf8;border-color:#0284c7;font-weight:500;";
+            downloadStlBtn.title = "Download active 3D model as STL for 3D slicing & printing (.stl)";
+            downloadStlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+                '<polyline points="7 10 12 15 17 10"/>' +
+                '<line x1="12" y1="15" x2="12" y2="3"/>' +
+                '</svg>' +
+                '<span>Download .STL</span>';
+            downloadStlBtn.addEventListener("click", () => this.downloadSTL());
+            downloadGroup.appendChild(downloadStlBtn);
+
             toolbar.appendChild(downloadGroup);
 
             this.container.appendChild(toolbar);
@@ -317,6 +332,7 @@
                     .then(() => Promise.all([
                         loadScript(this.options.cdnControlsUrl),
                         loadScript(this.options.cdnGltfLoaderUrl),
+                        loadScript(this.options.cdnStlExporterUrl).catch(() => {}),
                     ]))
                     .then(() => resolve())
                     .catch((err) => reject(err));
@@ -753,6 +769,136 @@
             const blob = new Blob([glbContent], { type: "model/gltf-binary" });
             this._triggerFileSave(blob, this.activeFilename);
             this._resetDownloadButtonState();
+        }
+
+        downloadSTL() {
+            const stlFilename = (this.activeFilename || "sketch2shape_generated.glb").replace(/\.[^/.]+$/, "") + ".stl";
+            this.exportSceneToSTL(stlFilename);
+        }
+
+        exportSceneToSTL(filename = "sketch2shape_generated.stl") {
+            const THREE = window.THREE;
+            if (!this.modelGroup) return;
+
+            // 1. Native THREE.STLExporter if available
+            if (THREE && window.THREE.STLExporter) {
+                try {
+                    const exporter = new THREE.STLExporter();
+                    const result = exporter.parse(this.modelGroup, { binary: true });
+                    const blob = new Blob([result], { type: "application/octet-stream" });
+                    this._triggerFileSave(blob, filename);
+                    return;
+                } catch (e) {
+                    console.warn("[Sketch2ShapeViewer] THREE.STLExporter failed, using robust fallback:", e);
+                }
+            }
+
+            // 2. High-performance, offline-resilient binary STL serializer
+            try {
+                const triangles = [];
+                this.modelGroup.updateMatrixWorld(true);
+                this.modelGroup.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        const geom = child.geometry;
+                        const pos = geom.attributes.position;
+                        if (!pos) return;
+
+                        const matrix = child.matrixWorld;
+                        const vA = new THREE.Vector3();
+                        const vB = new THREE.Vector3();
+                        const vC = new THREE.Vector3();
+                        const normal = new THREE.Vector3();
+
+                        const index = geom.index;
+                        if (index) {
+                            for (let i = 0; i < index.count; i += 3) {
+                                const a = index.getX(i);
+                                const b = index.getX(i + 1);
+                                const c = index.getX(i + 2);
+
+                                vA.fromBufferAttribute(pos, a).applyMatrix4(matrix);
+                                vB.fromBufferAttribute(pos, b).applyMatrix4(matrix);
+                                vC.fromBufferAttribute(pos, c).applyMatrix4(matrix);
+
+                                const cb = new THREE.Vector3().subVectors(vC, vB);
+                                const ab = new THREE.Vector3().subVectors(vA, vB);
+                                normal.crossVectors(cb, ab).normalize();
+
+                                triangles.push({
+                                    normal: [normal.x, normal.y, normal.z],
+                                    a: [vA.x, vA.y, vA.z],
+                                    b: [vB.x, vB.y, vB.z],
+                                    c: [vC.x, vC.y, vC.z]
+                                });
+                            }
+                        } else {
+                            for (let i = 0; i < pos.count; i += 3) {
+                                vA.fromBufferAttribute(pos, i).applyMatrix4(matrix);
+                                vB.fromBufferAttribute(pos, i + 1).applyMatrix4(matrix);
+                                vC.fromBufferAttribute(pos, i + 2).applyMatrix4(matrix);
+
+                                const cb = new THREE.Vector3().subVectors(vC, vB);
+                                const ab = new THREE.Vector3().subVectors(vA, vB);
+                                normal.crossVectors(cb, ab).normalize();
+
+                                triangles.push({
+                                    normal: [normal.x, normal.y, normal.z],
+                                    a: [vA.x, vA.y, vA.z],
+                                    b: [vB.x, vB.y, vB.z],
+                                    c: [vC.x, vC.y, vC.z]
+                                });
+                            }
+                        }
+                    }
+                });
+
+                if (triangles.length === 0) {
+                    console.warn("[Sketch2ShapeViewer] No mesh triangles found to export to STL.");
+                    return;
+                }
+
+                // Standard Binary STL format: 80 bytes header + 4 bytes triangle count + 50 bytes per facet
+                const bufferSize = 84 + 50 * triangles.length;
+                const buffer = new ArrayBuffer(bufferSize);
+                const view = new DataView(buffer);
+
+                // Write 80-byte header
+                const headerText = "Sketch2Shape AI Binary STL Exporter (TechZephyr 4.0)";
+                for (let i = 0; i < 80; i++) {
+                    view.setUint8(i, i < headerText.length ? headerText.charCodeAt(i) : 0);
+                }
+
+                // Write facet count (uint32, little-endian)
+                view.setUint32(80, triangles.length, true);
+
+                let offset = 84;
+                for (let i = 0; i < triangles.length; i++) {
+                    const tri = triangles[i];
+                    // Normal
+                    view.setFloat32(offset, tri.normal[0], true); offset += 4;
+                    view.setFloat32(offset, tri.normal[1], true); offset += 4;
+                    view.setFloat32(offset, tri.normal[2], true); offset += 4;
+                    // Vertex 1
+                    view.setFloat32(offset, tri.a[0], true); offset += 4;
+                    view.setFloat32(offset, tri.a[1], true); offset += 4;
+                    view.setFloat32(offset, tri.a[2], true); offset += 4;
+                    // Vertex 2
+                    view.setFloat32(offset, tri.b[0], true); offset += 4;
+                    view.setFloat32(offset, tri.b[1], true); offset += 4;
+                    view.setFloat32(offset, tri.b[2], true); offset += 4;
+                    // Vertex 3
+                    view.setFloat32(offset, tri.c[0], true); offset += 4;
+                    view.setFloat32(offset, tri.c[1], true); offset += 4;
+                    view.setFloat32(offset, tri.c[2], true); offset += 4;
+                    // Attribute byte count (uint16)
+                    view.setUint16(offset, 0, true); offset += 2;
+                }
+
+                const blob = new Blob([buffer], { type: "application/octet-stream" });
+                this._triggerFileSave(blob, filename);
+            } catch (err) {
+                console.error("[Sketch2ShapeViewer] STL export error:", err);
+            }
         }
 
         _resetDownloadButtonState() {
