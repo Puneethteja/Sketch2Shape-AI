@@ -78,6 +78,7 @@ class GenerateRequest(BaseModel):
     image: Optional[str] = Field(default=None, description="Alias for sketch (image data URL or path)")
     prompt: str = Field(default="", description="Optional aesthetic guidance or text prompt conditioning")
     material: str = Field(default="ceramic", description="Target material finish: 'ceramic', 'slate', or 'bronze'")
+    hf_token: Optional[str] = Field(default=None, description="Optional Hugging Face token to bypass ZeroGPU anonymous quota limits")
 
 
 class ExportRequest(BaseModel):
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
                 image_input=sketch_data,
                 prompt=payload.prompt,
                 material=payload.material,
+                hf_token=payload.hf_token,
                 output_dir=outputs_dir,
             )
             _LAST_GENERATED_RESULT = res

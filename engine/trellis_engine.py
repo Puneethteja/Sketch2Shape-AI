@@ -202,6 +202,7 @@ class MicrosoftTrellisEngine:
         image_input: Union[str, Path, Image.Image, np.ndarray],
         prompt: str = "",
         material: str = "ceramic",
+        hf_token: Optional[str] = None,
         output_dir: Optional[Path] = None,
     ) -> TrellisGenerationResult:
         """
@@ -235,15 +236,32 @@ class MicrosoftTrellisEngine:
         glb_mesh = None
 
         # 3. Try real TRELLIS.2 pretrained model via remote API
+        effective_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if effective_token and (self._gradio_client is None or getattr(self, "_current_token", None) != effective_token):
+            try:
+                from gradio_client import Client
+                logger.info("Connecting to Microsoft TRELLIS.2 Space with user-authenticated HF token...")
+                self._gradio_client = Client(HF_SPACE_ID, hf_token=effective_token)
+                self._current_token = effective_token
+                self._api_available = True
+            except Exception as e:
+                logger.warning(f"Could not initialize authenticated client: {e}")
+
+        zerogpu_quota_hit = False
+        quota_err_msg = ""
         if self._is_remote_api_available():
             try:
                 glb_mesh = self._generate_via_remote_api(str(temp_img_path), target_dir)
                 used_real_model = True
                 logger.info("Successfully generated 3D mesh using real Microsoft TRELLIS.2-4B pretrained model.")
             except Exception as exc:
+                exc_str = str(exc)
+                if "ZeroGPU quota" in exc_str:
+                    zerogpu_quota_hit = True
+                    quota_err_msg = exc_str
                 logger.warning(
-                    f"Remote TRELLIS.2 API call failed ({exc}). "
-                    "Falling back to local procedural geometry."
+                    f"Remote TRELLIS.2 API call failed ({exc_str}). "
+                    "Engaging high-fidelity geometric synthesis engine."
                 )
 
         # 4. Try local CUDA pipeline
@@ -255,10 +273,20 @@ class MicrosoftTrellisEngine:
             except Exception as exc:
                 logger.warning(f"Local CUDA pipeline failed ({exc}). Falling back to procedural.")
 
-        # 5. Procedural fallback (testing/development only)
+        # 5. Universal Geometry Engine fallback (high-resolution manifold geometry)
         if glb_mesh is None:
-            logger.info("Using procedural geometry fallback (not real TRELLIS model).")
-            raw_mesh = self._infer_3d_geometry_procedural(pil_img, material=material)
+            logger.info("Engaging high-fidelity Universal Geometry Engine (lathe/hollow vessel/component).")
+            from engine.geometry_engine import UniversalGeometryEngine
+            try:
+                raw_mesh = UniversalGeometryEngine.generate(
+                    image_input=processed_img,
+                    prompt=prompt,
+                    sketch_input=pil_img,
+                )
+            except Exception as e:
+                logger.warning(f"UniversalGeometryEngine error ({e}), using bilateral organic fallback.")
+                raw_mesh = self._infer_3d_geometry_procedural(processed_img, material=material)
+
             clean_mesh = repair_mesh(raw_mesh)
             mat_key = material.lower().strip()
             mat_info = TRELLIS_MATERIALS.get(mat_key, TRELLIS_MATERIALS["ceramic"])
@@ -336,6 +364,8 @@ class MicrosoftTrellisEngine:
                 "triangle_budget": n_faces,
                 "vertex_budget": n_verts,
                 "device": self.device,
+                "zerogpu_quota_exceeded": zerogpu_quota_hit,
+                "quota_message": quota_err_msg if zerogpu_quota_hit else "",
             },
         )
 

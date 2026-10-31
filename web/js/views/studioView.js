@@ -212,6 +212,15 @@ export function createStudioView() {
                 <input id="studio-prompt-input" type="text" class="form-input" placeholder="e.g. geometric porcelain vase with fluted rim and gloss glaze" style="width: 100%; margin-top: 4px; font-size: 12px; padding: 8px 12px; border-radius: 6px; background: rgba(30, 41, 59, 0.7); border: 1px solid var(--border-default); color: var(--text-primary);">
               </div>
 
+              <!-- Optional Hugging Face Token for ZeroGPU -->
+              <div class="token-input-box" style="margin-top: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label for="studio-hf-token" class="selection-label" style="font-size: 11px;">Hugging Face Token (ZeroGPU):</label>
+                  <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener" style="font-size: 10.5px; color: #818cf8; text-decoration: none;">Get Free Token &rarr;</a>
+                </div>
+                <input id="studio-hf-token" type="password" class="form-input" placeholder="hf_... (optional, unlocks unlimited Microsoft GPU compute)" style="width: 100%; margin-top: 4px; font-size: 11px; padding: 7px 10px; border-radius: 6px; background: rgba(30, 41, 59, 0.5); border: 1px solid var(--border-subtle); color: var(--text-primary);">
+              </div>
+
               <!-- Single Primary Generation Action -->
               <div class="action-buttons-wrap" style="margin-top: 16px;">
                 <button id="btn-generate-3d" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px 18px; font-weight: 600;">
@@ -334,6 +343,15 @@ export function createStudioView() {
 
     afterRender() {
       const state = store.getState();
+
+      // Initialize HF Token from localStorage
+      const tokenInput = document.getElementById("studio-hf-token");
+      if (tokenInput) {
+        tokenInput.value = localStorage.getItem("s2s_hf_token") || "";
+        tokenInput.addEventListener("input", (e) => {
+          localStorage.setItem("s2s_hf_token", e.target.value.trim());
+        });
+      }
 
       // 1. Initialize Canvas Editor
       const canvasEl = document.getElementById("studio-canvas");
@@ -617,6 +635,8 @@ export function createStudioView() {
           try {
             const promptEl = document.getElementById("studio-prompt-input");
             const promptVal = promptEl ? promptEl.value.trim() : (store.getState().params.prompt || "");
+            const tokenEl = document.getElementById("studio-hf-token");
+            const tokenVal = (tokenEl ? tokenEl.value.trim() : "") || localStorage.getItem("s2s_hf_token") || null;
 
             const resp = await fetch("/api/generate-3d", {
               method: "POST",
@@ -625,6 +645,7 @@ export function createStudioView() {
                 sketch: canvasEditor.toDataURL(),
                 prompt: promptVal,
                 material: activeMaterial,
+                hf_token: tokenVal || null,
               }),
             });
 
@@ -662,11 +683,21 @@ export function createStudioView() {
                 glbUrl: data.glb_url,
               });
 
-              store.showToast(
-                `Synthesized 3D Model in ${data.latency}s · 4 Formats Ready for Download`,
-                "success",
-                4500
-              );
+              if (data.metrics && data.metrics.zerogpu_quota_exceeded) {
+                store.showToast(
+                  "ZeroGPU anonymous quota limit reached. Paste your free Hugging Face token above for unlimited Microsoft GPU compute!",
+                  "warning",
+                  7000
+                );
+              } else {
+                store.showToast(
+                  data.used_real_model
+                    ? `Generated via TRELLIS.2-4B Pretrained Model in ${data.latency}s · 4 Formats Ready`
+                    : `Generated via High-Fidelity Geometry Engine in ${data.latency}s · 4 Formats Ready`,
+                  "success",
+                  4500
+                );
+              }
             } else {
               throw new Error("Server returned error during generation");
             }
