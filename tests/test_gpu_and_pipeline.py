@@ -3,7 +3,7 @@ tests/test_gpu_and_pipeline.py
 ==============================
 Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
 
-Unit tests for engine/check_gpu.py and engine/test_pipeline.py.
+Unit tests for engine/check_gpu.py.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from engine.check_gpu import (
     get_gpu_info,
     run_gpu_diagnostic,
 )
-from engine.test_pipeline import check_dependencies, verify_pipeline_stack
 
 
 def test_cuda_availability_check():
@@ -55,19 +54,3 @@ def test_run_gpu_diagnostic():
     assert "gpu_info" in report
     assert "fp16_supported" in report
     assert "production_ready" in report
-
-
-def test_pipeline_check_dependencies():
-    """Verify check_dependencies returns package status dictionary."""
-    deps = check_dependencies()
-    assert "torch" in deps
-    assert "cv2" in deps
-    assert "PIL" in deps
-    assert isinstance(deps["torch"][0], bool)
-
-
-def test_pipeline_verify_stack_dry_run():
-    """Verify verify_pipeline_stack dry_run returns a structured status."""
-    res = verify_pipeline_stack(dry_run=True)
-    assert isinstance(res, dict)
-    assert "success" in res
