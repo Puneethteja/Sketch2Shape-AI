@@ -474,36 +474,36 @@ These are fused with the reconstructor's own depth estimate at a 45/55 blend rat
 
 ---
 
-### [2026-10-31] · Mona · Phase 4 · AI Performance Benchmarks & VRAM Optimization
+### [2026-10-31] · Laxmi · Phase 4 · UX & UI Stability Verification
 
-**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer
-**Branch:** `feature/mona-phase4-optimization`
-**Scope:** AI inference latency profiling, VRAM memory budget optimization, ControlNet parameter fine-tuning (`engine/generator.py`), automated stage evacuation routines (`engine/pipeline.py`), and hardware benchmark verification.
+**Engineer:** Laxmi — Lead Frontend, WebGL & Technical Documentation  
+**Branch:** `feature/laxmi-phase4-polish`  
+**Scope:** Frontend responsiveness, WebGL viewer UX controls, graceful error boundaries (`ui/app.py`), and interactive viewport resilience (`ui/viewer.js`).
 
 #### Key Deliverables & Achievements
 
 | Artifact | Path | Description |
 |---|---|---|
-| **VRAM Clearing & CPU Offload** | [`engine/pipeline.py`](../engine/pipeline.py) | Automated `_evacuate_vram()` routine combining explicit model CPU offloading (`model.to("cpu")`), garbage collection (`gc.collect()`), CUDA cache emptying (`torch.cuda.empty_cache()`), and IPC reclaim (`torch.cuda.ipc_collect()`) between pipeline stages. |
-| **ControlNet Fine-Tuning** | [`engine/generator.py`](../engine/generator.py) | Calibrated default ControlNet conditioning scale to 0.80 (target 0.75 - 0.85) and Classifier-Free Guidance (CFG) to 7.0. Reduced default diffusion steps from 30 to 20 for UniPCMultistepScheduler, cutting stage latency by ~33% while preserving crisp contour alignment. |
-| **Latency Profiling Breakdown** | [`engine/pipeline.py`](../engine/pipeline.py) | Structured stage timing capture across preprocessing, diffusion pass, StageLinker extraction, 3D reconstruction, and GLB serialization. Total runtime on T4/V100 targets 20-30 seconds, well within the 30-45 second threshold. |
+| **Graceful Error Boundaries** | [`ui/app.py`](../ui/app.py) | Non-intrusive UI notifications via `gr.Warning` and `gr.Info` for blank canvas detection, corrupt or invalid file formats, and GPU OOM / timeout recovery with VRAM cache purge. |
+| **Interactive Progress Bar** | [`ui/viewer.js`](../ui/viewer.js) | Real-time loading progress bar with percentage readout and transition animations during GLB model downloads and parsing. |
+| **Asset Reset & Disposal** | [`ui/viewer.js`](../ui/viewer.js) | One-click scene reset control clearing current geometries, materials, textures, and DOM elements back to a clean state. |
+| **Fullscreen & Viewport Adaptability** | [`ui/viewer.js`](../ui/viewer.js) & [`ui/app.py`](../ui/app.py) | Fullscreen toggle button with native Fullscreen API integration, `ResizeObserver` dynamic viewport tracking, touch gesture optimization, and mobile/tablet CSS media queries. |
 
-#### AI Performance Benchmarks & Hardware Profiling
+#### Stability & Error Handling Verification
 
-| Stage / Metric | FP32 Baseline | FP16 Optimized (Ours) | Speedup / Reduction |
-|---|---|---|---|
-| **Stage 2: Diffusion Generation (20 steps)** | 28.4s (10.4 GB VRAM) | 13.2s (5.2 GB VRAM) | **2.15x faster / 50% less VRAM** |
-| **Inter-Stage Handover (VRAM Evacuation)** | N/A (Residual OOM) | 0.12s (Reclaimed to 0.0 GB active) | **Zero VRAM collision** |
-| **Stage 3: 3D Reconstruction** | 16.8s (12.1 GB VRAM) | 7.9s (6.5 GB VRAM) | **2.12x faster / 46% less VRAM** |
-| **Stage 4 & 5: Mesh Repair & GLB Export** | 0.82s | 0.45s | **1.82x faster** |
-| **End-to-End Pipeline Latency** | 46.0s+ | **21.7s** | **2.12x overall speedup** |
-| **Peak Concurrent VRAM** | 14.8+ GB (OOM risk) | **6.5 GB** | **Fits in 8 GB / 16 GB GPUs** |
+1. **Blank Canvas & Sketch Validation**:
+   - Integrated pixel-level standard deviation inspection (`_is_blank_sketch`) across base64 data-URLs and NumPy image matrices.
+   - Triggers non-blocking `gr.Warning("Please draw a sketch on the canvas before generating a 3D asset.")` and aborts early without exhausting backend pipeline compute or crashing session state.
 
-#### ControlNet Parameter Calibration Summary
-- **Conditioning Scale (0.80)**: Positioned within the calibrated 0.75 - 0.85 window to balance structural adherence to hand-drawn sketches without over-constraining surface texture generation.
-- **Classifier-Free Guidance (7.0)**: Tuned to eliminate high-contrast edge halos while maintaining distinct object-background separation for seamless foreground extraction.
-- **Inference Steps (20)**: Fast multi-step UniPC scheduler reaches full convergence at 20 steps, shaving 5-8 seconds off diffusion latency compared to 30 steps with identical perceptual contour accuracy.
+2. **File Ingestion & Header Verification**:
+   - Added rigorous file extension and magic byte verification (`_validate_uploaded_file`) supporting PNG, JPEG, and JPG.
+   - Detects corrupted uploads and raises friendly `gr.Warning` toasts with safe status fallback.
 
-#### Cross-Team Integration Notes
-- **Laxmi (Frontend)**: Real-time generation feedback reports latency breakdowns and peak VRAM to Gradio status monitors. End-to-end execution completes within interactive hackathon demo thresholds.
-- **Puneeth (Infrastructure)**: Sequential evacuation prevents memory fragmentation between `utils.segmentation` rembg models and generative diffusion backbones.
+3. **GPU Timeout & Out-Of-Memory Recovery**:
+   - Guarded generation orchestration within structured error boundaries catching `torch.cuda.OutOfMemoryError` and generic timeout exceptions.
+   - Automatically invokes `torch.cuda.empty_cache()` and `gc.collect()` upon resource exhaustion, preventing GPU hang or browser disconnection.
+
+4. **WebGL Viewport Resilience & Mobile Optimization**:
+   - Configured `ResizeObserver` on the 3D viewport canvas container for seamless dynamic resizing during window resizing, split-screen splits, or mobile orientation switches.
+   - Added full-screen mode toggle with automated icon switching and browser vendor prefix handling (`webkit`, `moz`, `ms`).
+   - Integrated touch-action styling (`touch-action: none;`) to prevent unwanted scrolling while manipulating the 3D orbit controls on mobile touchscreens.
