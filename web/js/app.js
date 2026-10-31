@@ -6,33 +6,28 @@
 import { Router } from "./router.js";
 import { renderNavbar } from "./components/navbar.js";
 import { createStudioView } from "./views/studioView.js";
+import { createModelView } from "./views/modelView.js";
 import { createGalleryView } from "./views/galleryView.js";
-import { createPipelineView } from "./views/pipelineView.js";
 import { createBenchmarksView } from "./views/benchmarksView.js";
-import { createSettingsView } from "./views/settingsView.js";
 import { createNotFoundView } from "./views/notFoundView.js";
 
 // Route Definition Table
 const ROUTES = {
   "#/studio": {
-    title: "3D Synthesis Studio",
+    title: "TRELLIS 3D Studio",
     view: createStudioView,
+  },
+  "#/model": {
+    title: "TRELLIS.2-4B Model Specs",
+    view: createModelView,
   },
   "#/gallery": {
     title: "3D Asset Gallery",
     view: createGalleryView,
   },
-  "#/pipeline": {
-    title: "AI Pipeline Architecture",
-    view: createPipelineView,
-  },
-  "#/benchmarks": {
-    title: "Resilience & Benchmarks",
+  "#/metrics": {
+    title: "Verification & Telemetry",
     view: createBenchmarksView,
-  },
-  "#/settings": {
-    title: "Settings & Diagnostics",
-    view: createSettingsView,
   },
   "404": {
     title: "Page Not Found",

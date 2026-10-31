@@ -268,10 +268,6 @@ class StageLinker:
         )
 
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
-        try:
-            watertight_mesh.is_watertight = True
-        except (AttributeError, TypeError):
-            pass
 
         elapsed = round(time.perf_counter() - t0, 3)
         logger.info(

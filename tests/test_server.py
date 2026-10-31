@@ -101,20 +101,33 @@ def test_generate_api(client):
         json={
             "sketch": b64,
             "prompt": "smooth porcelain ceramic vase",
-            "controlnet_scale": 0.85,
-            "inference_steps": 2,
-            "seed": 42,
+            "material": "ceramic",
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    assert "glb_url" in data
+    assert data["model_name"] == "Microsoft TRELLIS (TRELLIS.2-4B)"
     assert data["glb_url"].startswith("/outputs/")
+    assert data["obj_url"].startswith("/outputs/")
+    assert data["stl_url"].startswith("/outputs/")
+    assert data["ply_url"].startswith("/outputs/")
     assert data["vertices"] > 0
     assert data["faces"] > 0
     assert isinstance(data["is_watertight"], bool)
-    assert data["seed"] == 42
+    assert "STL" in data["formats"]
+    assert "OBJ" in data["formats"]
+    assert "GLB" in data["formats"]
+    assert "PLY" in data["formats"]
+
+
+def test_model_metrics_api(client):
+    response = client.get("/api/model/metrics")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert "Microsoft TRELLIS" in data["specs"]["model_name"]
+    assert "ceramic" in data["materials"]
 
 
 def test_usp_components_api(client):

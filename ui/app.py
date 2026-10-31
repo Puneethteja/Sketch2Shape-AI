@@ -872,7 +872,7 @@ def _run_ai_generation(
     uploaded_file: Optional[Any] = None,
     canvas_data_url: Optional[str] = None,
     preprocessed_preview: Optional[Image.Image] = None,
-    progress: gr.Progress = gr.Progress(track_tqdm=True),
+    progress: Any = gr.Progress(track_tqdm=True),
 ) -> GenerationOutput:
     global _LAST_GENERATED_MESH
 
@@ -1168,7 +1168,7 @@ def _clear_session() -> Tuple:
         "",
     )
 
-def build_ui() -> gr.Blocks:
+def build_ui() -> Any:
     with gr.Blocks(
         title=APP_TITLE,
         head=_HEAD_SCRIPTS_HTML,
@@ -1203,45 +1203,44 @@ def build_ui() -> gr.Blocks:
                 elem_id="app-title",
             )
 
-        gr.Markdown("---")
+        with gr.Tabs(elem_id="main-app-tabs"):
+            with gr.Tab("🎨 Studio (Canvas & 3D)", id="studio"):
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1, min_width=380):
+                        gr.HTML('<p class="panel-header">Sketch Input</p>')
+                        gr.HTML(_HTML5_CANVAS_HTML, elem_id="html5-canvas-root")
 
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1, min_width=380):
-                gr.HTML('<p class="panel-header">Sketch Input</p>')
-                gr.HTML(_HTML5_CANVAS_HTML, elem_id="html5-canvas-root")
-
-                with gr.Accordion(
-                    label="Alternative / Fallback Sketchpad",
-                    open=False,
-                    elem_classes=["compact-accordion"],
-                ):
-                    canvas = gr.Sketchpad(
-                        label="Standard Drawing Canvas",
-                        type="numpy",
-                        image_mode="RGBA",
-                        elem_id="sketch-canvas",
-                        height=260,
-                    )
+                        with gr.Accordion(
+                            label="Alternative / Fallback Sketchpad",
+                            open=False,
+                            elem_classes=["compact-accordion"],
+                        ):
+                            canvas = gr.Sketchpad(
+                                label="Standard Drawing Canvas",
+                                type="numpy",
+                                image_mode="RGBA",
+                                elem_id="sketch-canvas",
+                                height=260,
+                            )
 
                         gr.HTML('<div style="margin: 6px 0 4px; font-size: 11px; color: var(--body-text-color-subdued); text-align: center;">— or upload sketch / photo —</div>')
 
-                with gr.Row(elem_id="upload-row-container"):
-                    file_upload = gr.File(
-                        label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
-                        file_types=SUPPORTED_UPLOAD_EXTENSIONS,
-                        file_count="single",
-                        elem_id="file-uploader",
-                        scale=9,
-                    )
-                    btn_remove_upload = gr.Button(
-                        "✕",
-                        variant="secondary",
-                        size="sm",
-                        elem_id="btn-remove-upload",
-                        title="Remove uploaded sketch file and clear preview",
-                        scale=1,
-                        min_width=42,
-                    )
+                        with gr.Row(elem_id="upload-row-container"):
+                            file_upload = gr.File(
+                                label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
+                                file_types=SUPPORTED_UPLOAD_EXTENSIONS,
+                                file_count="single",
+                                elem_id="file-uploader",
+                                scale=9,
+                            )
+                            btn_remove_upload = gr.Button(
+                                "✕",
+                                variant="secondary",
+                                size="sm",
+                                elem_id="btn-remove-upload",
+                                scale=1,
+                                min_width=42,
+                            )
 
                         prompt_input = gr.Textbox(
                             label="Material / Style Prompt (Optional)",
@@ -1251,33 +1250,33 @@ def build_ui() -> gr.Blocks:
                             elem_id="prompt-input",
                         )
 
-                with gr.Accordion(
-                    label="Pipeline Parameters",
-                    open=False,
-                    elem_classes=["compact-accordion"],
-                ):
-                    controlnet_scale = gr.Slider(
-                        label="ControlNet Conditioning Scale",
-                        minimum=0.0,
-                        maximum=2.0,
-                        value=0.85,
-                        step=0.05,
-                        info="Strength of sketch conditioning. 0.70–0.95 recommended.",
-                    )
-                    inference_steps = gr.Slider(
-                        label="Denoising Steps",
-                        minimum=10,
-                        maximum=100,
-                        value=30,
-                        step=5,
-                        info="More steps → higher quality, slower runtime.",
-                    )
-                    seed_input = gr.Number(
-                        label="Seed",
-                        value=-1,
-                        precision=0,
-                        info="-1 = random seed.",
-                    )
+                        with gr.Accordion(
+                            label="Pipeline Parameters",
+                            open=False,
+                            elem_classes=["compact-accordion"],
+                        ):
+                            controlnet_scale = gr.Slider(
+                                label="ControlNet Conditioning Scale",
+                                minimum=0.0,
+                                maximum=2.0,
+                                value=0.85,
+                                step=0.05,
+                                info="Strength of sketch conditioning. 0.70–0.95 recommended.",
+                            )
+                            inference_steps = gr.Slider(
+                                label="Denoising Steps",
+                                minimum=10,
+                                maximum=100,
+                                value=30,
+                                step=5,
+                                info="More steps → higher quality, slower runtime.",
+                            )
+                            seed_input = gr.Number(
+                                label="Seed",
+                                value=-1,
+                                precision=0,
+                                info="-1 = random seed.",
+                            )
 
                         with gr.Row():
                             btn_preprocess = gr.Button(
@@ -1296,24 +1295,24 @@ def build_ui() -> gr.Blocks:
                                 size="sm",
                             )
 
-            with gr.Column(scale=1, min_width=380):
-                gr.HTML('<p class="panel-header">3D WebGL Asset Preview</p>')
-                gr.HTML(_WEBGL_VIEWER_HTML, elem_id="webgl-viewport")
+                    with gr.Column(scale=1, min_width=380):
+                        gr.HTML('<p class="panel-header">3D WebGL Asset Preview</p>')
+                        gr.HTML(_WEBGL_VIEWER_HTML, elem_id="webgl-viewport")
 
-                preprocessed_view = gr.Image(
-                    label="Preprocessed / Lineart Preview",
-                    type="pil",
-                    interactive=False,
-                                        height=180,
-                )
+                        preprocessed_view = gr.Image(
+                            label="Preprocessed / Lineart Preview",
+                            type="pil",
+                            interactive=False,
+                            height=180,
+                        )
 
-                depth_view = gr.Image(
-                    label="Depth / Normal Map [AI Engine Output]",
-                    type="pil",
-                    interactive=False,
-                                        height=180,
-                    visible=True,
-                )
+                        depth_view = gr.Image(
+                            label="Depth / Normal Map [AI Engine Output]",
+                            type="pil",
+                            interactive=False,
+                            height=180,
+                            visible=True,
+                        )
 
                         gr.HTML('<p class="panel-header" style="margin-top: 8px;">Mesh Export & Downloads</p>')
 
@@ -1467,12 +1466,6 @@ def build_ui() -> gr.Blocks:
                 preprocessed_view,
             ],
             outputs=[depth_view, export_file, status_bar, glb_url_holder],
-        )
-
-        export_file.change(
-            fn=lambda f: f.name if (f and hasattr(f, "name")) else (str(f) if f else None),
-            inputs=[export_file],
-            outputs=[model_3d_view],
         )
 
         btn_export.click(

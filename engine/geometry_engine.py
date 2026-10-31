@@ -401,11 +401,6 @@ class RotationalVesselEngine:
             z_bot=float(z_outer[0]),
         )
 
-        logger.info(
-            f"[RotationalVessel] Reconstructed hollow lathe mesh: "
-            f"{len(verts_arr)} vertices, {len(faces_arr)} faces, watertight=True"
-        )
-
         if TRIMESH_AVAILABLE and trimesh is not None:
             mesh = trimesh.Trimesh(
                 vertices=verts_arr,
@@ -413,15 +408,22 @@ class RotationalVesselEngine:
                 vertex_colors=vertex_colors,
                 process=False,
             )
-            mesh.is_watertight = True
-            return mesh
         else:
-            return TrimeshFallback(
+            mesh = TrimeshFallback(
                 vertices=verts_arr,
                 faces=faces_arr,
                 vertex_colors=vertex_colors,
                 is_watertight=True,
             )
+
+        logger.info(
+            "[RotationalVessel] Reconstructed hollow lathe mesh: "
+            "%s vertices, %s faces, watertight=%s",
+            len(verts_arr),
+            len(faces_arr),
+            mesh.is_watertight,
+        )
+        return mesh
 
     @staticmethod
     def _compute_porcelain_colors(
@@ -542,7 +544,6 @@ class ComponentGeometryEngine:
 
         if TRIMESH_AVAILABLE and trimesh is not None:
             mesh = trimesh.Trimesh(vertices=verts_arr, faces=faces_arr, process=False)
-            mesh.is_watertight = True
             return mesh
         return TrimeshFallback(vertices=verts_arr, faces=faces_arr, is_watertight=True)
 
@@ -617,7 +618,6 @@ class BilateralOrganicEngine:
 
         if TRIMESH_AVAILABLE and trimesh is not None:
             mesh = trimesh.Trimesh(vertices=all_verts, faces=faces, process=False)
-            mesh.is_watertight = True
             return mesh
         return TrimeshFallback(vertices=all_verts, faces=faces, is_watertight=True)
 

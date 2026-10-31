@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sketch2Shape AI — Generative 2D-to-3D Synthesis</title>
-  <meta name="description" content="Transform hand-drawn 2D sketches into watertight, textured 3D meshes using conditioned diffusion and deep learning geometric reconstruction.">
+  <title>Sketch2Shape AI — Microsoft TRELLIS.2-4B 3D Studio</title>
+  <meta name="description" content="Generate manufacturing-ready 3D meshes in STL, OBJ, GLB, and PLY formats from 2D sketches using Microsoft TRELLIS Structured 3D Latents.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -16,37 +16,40 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 </head>
 <body>
-  <div id="app-root">
-    <!-- Navigation Mount -->
-    <header id="navbar-root"></header>
+  <div id="app-root" class="app-layout">
+    <!-- Left Sidebar Navigation -->
+    <aside id="sidebar-root" class="app-sidebar"></aside>
 
-    <!-- Main View Mount with Page Transition Wrapper -->
-    <main id="main-content" class="main-content" role="main">
-      <div id="view-container" class="view-container"></div>
-    </main>
+    <!-- Main Workspace Area -->
+    <div class="app-main-wrapper">
+      <main id="main-content" class="main-content" role="main">
+        <div id="view-container" class="view-container"></div>
+      </main>
+
+      <!-- Clean Elegant Footer -->
+      <footer class="app-footer">
+        <div class="footer-inner">
+          <div class="footer-brand">
+            <span>Sketch2Shape AI &middot; Microsoft TRELLIS.2-4B Engine</span>
+          </div>
+          <div class="footer-meta">
+            <span class="footer-formats">Exports: STL &middot; OBJ &middot; GLB &middot; PLY</span>
+            <span class="footer-links">
+              <a href="#/studio">Studio</a>
+              <span class="sep">&bull;</span>
+              <a href="#/model">Model & Metrics</a>
+              <span class="sep">&bull;</span>
+              <a href="#/gallery">3D Gallery</a>
+              <span class="sep">&bull;</span>
+              <a href="#/metrics">Verification</a>
+            </span>
+          </div>
+        </div>
+      </footer>
+    </div>
 
     <!-- Global Floating Toast Notification Container -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-
-    <!-- Quick Footer -->
-    <footer class="app-footer">
-      <div class="footer-inner">
-        <div class="footer-brand">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-blue);"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-          <span>Sketch2Shape AI &middot; Generative 2D-to-3D Synthesis</span>
-        </div>
-        <div class="footer-meta">
-          <span class="badge badge-success"><span class="badge-dot"></span> Pipeline v1.0 &middot; Neural Core Trained</span>
-          <span class="footer-links">
-            <a href="#/pipeline">Architecture</a>
-            <span class="sep">&bull;</span>
-            <a href="#/benchmarks">Stress Tests</a>
-            <span class="sep">&bull;</span>
-            <a href="#/settings">Diagnostics</a>
-          </span>
-        </div>
-      </div>
-    </footer>
   </div>
 
   <!-- Entry Script -->

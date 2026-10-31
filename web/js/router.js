@@ -82,7 +82,7 @@ export class Router {
   }
 
   updateActiveNavLinks(currentHash) {
-    document.querySelectorAll(".nav-link").forEach(link => {
+    document.querySelectorAll(".nav-link, .nav-item").forEach(link => {
       const href = link.getAttribute("href");
       if (href === currentHash) {
         link.classList.add("active");

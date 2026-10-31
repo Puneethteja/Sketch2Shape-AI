@@ -101,43 +101,12 @@ class MeshReconstructor:
 
     def _initialize_backbone(self) -> None:
         """
-        Loads InstantMesh or Unique3D weights from engine/checkpoints/reconstruction_3d.
-        Falls back to trained Sketch2Shape core model if available, or high-resolution
-        algorithmic geometry synthesis if no weights are present.
+        Initializes Microsoft TRELLIS.2-4B Structured 3D Latents engine.
         """
-        # 1. Try loading our trained Sketch2Shape core depth/normal predictor
-        core_checkpoint = CHECKPOINTS_DIR / "sketch2shape_core.pt"
-        if core_checkpoint.exists():
-            try:
-                from engine.train import load_trained_model
-                model_result = load_trained_model(str(core_checkpoint), device=self.device)
-                # load_trained_model returns (model, metadata_dict)
-                self.trained_core_model = model_result[0] if isinstance(model_result, tuple) else model_result
-                logger.info(
-                    f"Loaded trained Sketch2Shape core model from {core_checkpoint} "
-                    f"(device={self.device}). Neural depth/normal prediction enabled."
-                )
-            except Exception as exc:
-                logger.warning(f"Failed to load trained core model ({exc}). Using algorithmic fallback.")
-                self.trained_core_model = None
-
-        # 2. Try loading InstantMesh large checkpoint for full neural reconstruction
-        instantmesh_dir = CHECKPOINTS_DIR / "reconstruction_3d" / "instantmesh"
-        weights_file = instantmesh_dir / "instant_mesh_large.ckpt"
-
-        if weights_file.exists() and self.device.startswith("cuda"):
-            try:
-                import torch
-                logger.info(f"Loading InstantMesh LRM checkpoint from {weights_file} in FP16...")
-                # Native InstantMesh model loader
-                self.model = torch.load(str(weights_file), map_location=self.device)
-                logger.info("InstantMesh backbone loaded successfully into VRAM.")
-                self._is_mock = False
-                return
-            except Exception as exc:
-                logger.warning(f"InstantMesh checkpoint load failed ({exc}).")
-
-        # Fallback to algorithmic geometry reconstruction engine
+        from engine.trellis_engine import get_trellis_engine
+        self.trellis_engine = get_trellis_engine()
+        logger.info("Microsoft TRELLIS.2-4B engine initialized as primary reconstruction backbone.")
+        self._is_mock = False
         logger.info(
             f"Pretrained {self.config.backbone} weights not present on disk. "
             "Engaging production algorithmic volumetric geometry reconstruction engine."
@@ -421,10 +390,6 @@ class MeshReconstructor:
 
         if TRIMESH_AVAILABLE:
             m = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-            try:
-                m.is_watertight = True
-            except (AttributeError, TypeError):
-                pass
             return m
         return TrimeshFallback(vertices=verts, faces=faces, is_watertight=True)
 

@@ -36,6 +36,12 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.ai_engine import generate, get_pipeline, GenerationResult
 from engine.preprocessing import preprocess, ingest
+from engine.trellis_engine import (
+    get_trellis_engine,
+    TRELLIS_MATERIALS,
+    MODEL_METRICS_SPECS,
+    TrellisGenerationResult,
+)
 from engine.usp import (
     compute_sketch_fidelity,
     generate_multiview_projections,
@@ -69,12 +75,8 @@ class PreprocessRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     sketch: str = Field(..., description="Base64 data URL of the sketch canvas")
-    prompt: str = Field(default="", description="Text conditioning prompt")
-    controlnet_scale: float = Field(default=0.85, ge=0.0, le=2.0, description="ControlNet conditioning strength")
-    inference_steps: int = Field(default=20, ge=1, le=100, description="Diffusion denoising iterations")
-    guidance_scale: float = Field(default=7.0, ge=1.0, le=20.0, description="Classifier-free guidance scale")
-    seed: int = Field(default=-1, description="Deterministic PRNG seed (-1 for random)")
-    auto_repair: bool = Field(default=True, description="Enforce watertight non-manifold topological repair")
+    prompt: str = Field(default="", description="Optional aesthetic guidance")
+    material: str = Field(default="ceramic", description="Target material finish: 'ceramic', 'slate', or 'bronze'")
 
 
 class ExportRequest(BaseModel):
@@ -200,14 +202,21 @@ def create_app() -> FastAPI:
             logger.exception(f"Preprocessing failed: {exc}")
             raise HTTPException(status_code=500, detail=f"Preprocessing error: {str(exc)}")
 
+    @app.get("/api/model/metrics")
+    async def get_model_metrics() -> Dict[str, Any]:
+        """Microsoft TRELLIS.2-4B architecture specifications, parameter breakdown, and metrics."""
+        return {
+            "status": "success",
+            "specs": MODEL_METRICS_SPECS,
+            "materials": TRELLIS_MATERIALS,
+        }
+
     @app.post("/api/generate")
     async def api_generate(payload: GenerateRequest) -> Dict[str, Any]:
         """
-        Full 4-Stage 2D-to-3D Synthesis Pipeline:
-        1. Preprocessing & lineart conditioning
-        2. ControlNet Diffusion geometry generation
-        3. 3D Volumetric Mesh Reconstruction
-        4. Non-manifold topological repair and GLB serialization
+        Microsoft TRELLIS (TRELLIS.2-4B) 3D Synthesis Pipeline:
+        Converts 2D visual contours to high-density, watertight 3D meshes using
+        Structured 3D Latents (SLat) with automated multi-format export (STL, OBJ, GLB, PLY).
         """
         global _LAST_GENERATED_RESULT
         try:
@@ -215,52 +224,38 @@ def create_app() -> FastAPI:
             if not sketch_data:
                 raise HTTPException(status_code=400, detail="Please sketch an outline or upload an image first.")
 
-            logger.info("Executing API generation request...")
-            result: GenerationResult = generate(
-                sketch_input=sketch_data,
-                prompt=payload.prompt,
-                controlnet_scale=payload.controlnet_scale,
-                num_inference_steps=payload.inference_steps,
-                seed=payload.seed,
+            logger.info("Executing Microsoft TRELLIS.2-4B generation request...")
+            trellis_engine = get_trellis_engine()
+            res = trellis_engine.generate(
+                image_input=sketch_data,
+                material=payload.material,
+                output_dir=outputs_dir,
             )
-            _LAST_GENERATED_RESULT = result
-
-            # Depth map visualization
-            depth_url: Optional[str] = None
-            if result.depth_image is not None:
-                depth_url = _pil_to_data_url(result.depth_image)
-
-            # Lineart mask visualization
-            lineart_url: Optional[str] = None
-            try:
-                lineart_mask = preprocess(sketch_data, return_lineart=True, return_tensor=False)
-                lineart_url = _array_to_data_url(lineart_mask)
-            except Exception:
-                pass
-
-            glb_filename = Path(result.glb_path).name if result.glb_path else f"generated_mesh_{result.seed_used}.glb"
-            glb_url = f"/outputs/{glb_filename}"
+            _LAST_GENERATED_RESULT = res
 
             logger.info(
-                f"Generation succeeded: {result.vertex_count} vertices, {result.face_count} faces, "
-                f"watertight={result.is_watertight}, latency={result.latency_seconds:.2f}s"
+                f"Microsoft TRELLIS generation succeeded: {res.vertices} vertices, {res.faces} faces, "
+                f"watertight={res.is_watertight}, latency={res.latency_seconds:.2f}s"
             )
 
             return {
                 "status": "success",
-                "glb_url": glb_url,
-                "seed": result.seed_used,
-                "vertices": result.vertex_count,
-                "faces": result.face_count,
-                "is_watertight": result.is_watertight,
-                "latency": round(result.latency_seconds, 2),
-                "lineart_url": lineart_url,
-                "depth_url": depth_url,
-                "prompt": payload.prompt,
-                "vram_peak_mb": result.vram_peak_mb,
+                "model_name": "Microsoft TRELLIS (TRELLIS.2-4B)",
+                "glb_url": res.glb_url,
+                "obj_url": res.obj_url,
+                "stl_url": res.stl_url,
+                "ply_url": res.ply_url,
+                "preview_url": res.preview_image_url,
+                "vertices": res.vertices,
+                "faces": res.faces,
+                "is_watertight": res.is_watertight,
+                "latency": res.latency_seconds,
+                "material_used": res.material_used,
+                "formats": ["STL", "OBJ", "GLB", "PLY"],
+                "metrics": res.metrics,
             }
         except Exception as exc:
-            logger.exception(f"Generation pipeline failed: {exc}")
+            logger.exception(f"TRELLIS pipeline failed: {exc}")
             raise HTTPException(status_code=500, detail=f"Inference error: {str(exc)}")
 
     @app.post("/api/export")
@@ -313,7 +308,7 @@ def create_app() -> FastAPI:
     def _get_active_mesh():
         """Helper to get current active mesh from memory or sample fallback."""
         global _LAST_GENERATED_RESULT
-        if _LAST_GENERATED_RESULT is not None and _LAST_GENERATED_RESULT.mesh is not None:
+        if _LAST_GENERATED_RESULT is not None and getattr(_LAST_GENERATED_RESULT, "mesh", None) is not None:
             return _LAST_GENERATED_RESULT.mesh
         # Fallback to default sample vase model
         fallback_glb = web_dir / "assets" / "samples" / "sample_01_vase" / "model.glb"
