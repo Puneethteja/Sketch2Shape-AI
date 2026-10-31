@@ -1,0 +1,36 @@
+name: sketch2shape
+channels:
+  - pytorch          # official PyTorch channel (CUDA wheels live here)
+  - nvidia           # CUDA runtime & cuDNN
+  - conda-forge      # broader ecosystem
+  - defaults
+
+dependencies:
+  # ── Python runtime ──────────────────────────────────────────────────────
+  - python=3.10
+
+  # ── PyTorch stack (CUDA 11.8) ───────────────────────────────────────────
+  # Switch cudatoolkit to 12.1 if your driver supports CUDA 12.x
+  - pytorch>=2.1.0
+  - torchvision>=0.16.0
+  - torchaudio>=2.1.0
+  - pytorch-cuda=11.8        # pulls matching cuDNN automatically
+
+  # ── Core CV & numerics ──────────────────────────────────────────────────
+  - numpy>=1.24,<2.0
+  - pillow>=10.0
+
+  # ── pip-only packages ───────────────────────────────────────────────────
+  - pip
+  - pip:
+      - opencv-python>=4.8.0        # headless safe on Linux servers; swap to
+                                    # opencv-python-headless if no display
+      - rembg>=2.0.50               # background removal (U²-Net)
+      - trimesh>=4.0.0              # 3-D mesh I/O & manipulation
+      - diffusers>=0.27.0           # HuggingFace diffusion pipeline
+      - transformers>=4.38.0        # shared HF tokenisers / models
+      - accelerate>=0.28.0          # mixed-precision / device dispatch
+      - huggingface-hub>=0.22.0     # model card & weight downloads
+      - scipy>=1.11.0               # trimesh optional dep
+      - matplotlib>=3.8.0           # quick visualisation helpers
+      - tqdm>=4.66.0                # progress bars
