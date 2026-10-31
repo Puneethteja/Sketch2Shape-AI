@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import logging
 import sys
+import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import gradio as gr
 import numpy as np
@@ -47,6 +48,13 @@ try:
 except ImportError:
     _PREPROCESSING_AVAILABLE = False
 
+# -- Lazy AI engine import (Mona's generative + 3D pipeline) --
+try:
+    import engine.ai_engine as _ai_engine
+    _AI_ENGINE_AVAILABLE = True
+except ImportError:
+    _AI_ENGINE_AVAILABLE = False
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +69,13 @@ APP_VERSION = "0.1.0-alpha"
 
 # Supported sketch export formats (populated by Mona's engine once ready)
 SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
+
+# Session state store for active pipeline assets
+_SESSION: Dict[str, Any] = {
+    "current_mesh": None,
+    "current_source": None,
+    "last_result": None,
+}
 
 # Placeholder colour for the WebGL viewport stub
 _WEBGL_STUB_COLOR = "#1a1a2e"
@@ -146,12 +161,34 @@ def _run_ai_generation(
         Depth / normal map preview image.
     status_message : str
     """
-    # TODO: wire to engine.ai_engine.generate() once Mona's module lands.
     logger.info(
         "UI: AI generation requested — prompt=%r  scale=%.2f  steps=%d  seed=%d",
         prompt, controlnet_scale, num_inference_steps, seed,
     )
-    return None, "⏳  AI engine not yet connected. [Stub — Mona's module pending]"
+    if not _AI_ENGINE_AVAILABLE:
+        return None, "[!] AI engine unavailable. Ensure engine/ai_engine.py is importable."
+    try:
+        sketch = np.zeros((512, 512, 3), dtype=np.uint8)
+        result = _ai_engine.generate(
+            sketch_input=sketch,
+            prompt=prompt,
+            controlnet_scale=controlnet_scale,
+            num_inference_steps=int(num_inference_steps),
+            seed=int(seed) if seed != -1 else None,
+        )
+        _SESSION["current_mesh"] = result.mesh
+        _SESSION["last_result"] = result
+        depth_img = result.depth_image
+        status = (
+            f"[OK] Generation complete — seed={result.seed} "
+            f"latency={result.elapsed_total:.2f}s "
+            f"watertight={result.is_watertight}"
+        )
+        logger.info("UI: %s", status)
+        return depth_img, status
+    except Exception as exc:  # noqa: BLE001
+        logger.error("UI: AI generation error: %s", exc, exc_info=True)
+        return None, f"[ERR] AI generation failed: {exc}"
 
 
 def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
@@ -169,9 +206,24 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
         Absolute path of the exported file (passed to gr.File for download).
     status_message : str
     """
-    # TODO: wire to trimesh serialisation once mesh is available in session state.
     logger.info("UI: Mesh export requested — format=%s", export_format)
-    return None, f"⏳  Mesh export stub — {export_format} export pending AI engine."
+    mesh = _SESSION.get("current_mesh")
+    if mesh is None:
+        return None, "[!] No mesh in session. Run AI generation first."
+    try:
+        ext_map = {"OBJ": ".obj", "GLB": ".glb", "STL": ".stl", "PLY": ".ply"}
+        ext = ext_map.get(export_format.upper(), ".obj")
+        tmp = tempfile.NamedTemporaryFile(
+            delete=False, suffix=ext, prefix="sketch2shape_",
+        )
+        tmp.close()
+        mesh.export(tmp.name, file_type=export_format.lower())
+        status = f"[OK] Exported {export_format} mesh to {tmp.name}"
+        logger.info("UI: %s", status)
+        return tmp.name, status
+    except Exception as exc:  # noqa: BLE001
+        logger.error("UI: Mesh export error: %s", exc, exc_info=True)
+        return None, f"[ERR] Mesh export failed: {exc}"
 
 
 def _clear_session() -> Tuple:

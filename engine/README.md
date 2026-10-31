@@ -3,7 +3,7 @@
 > **Sketch2Shape AI · TechZephyr 4.0 Hackathon · IIT Bhubaneswar**  
 > **Engineering Leads**: Puneeth (Data & Infrastructure) & Mona (Generative AI & 3D Reconstruction)
 
-The `engine` package forms the core computational pipeline for Sketch2Shape AI, transforming 2D hand-drawn input sketches into production-ready 3D mesh assets.
+The `engine` package forms the core computational pipeline for Sketch2Shape AI, transforming 2D hand-drawn input sketches into production-ready watertight 3D mesh assets.
 
 ---
 
@@ -14,6 +14,11 @@ engine/
 ├── __init__.py
 ├── preprocessing.py               # Phase 1: Ingestion, Letterboxing, Bilateral Filtering, Lineart (Puneeth)
 ├── test_pipeline.py               # Phase 1: SD 1.5 + ControlNet FP16 Smoke Test & Verification (Mona)
+├── generator.py                   # Phase 2: Sketch-guided SD 1.5 + ControlNet Scribble Generator (Mona)
+├── reconstruction.py              # Phase 2: Deep learning 3D reconstruction (InstantMesh / Unique3D) (Mona)
+├── mesh_utils.py                  # Phase 2: 7-step watertight repair (§3.4) & multi-format serializers (Mona)
+├── pipeline.py                    # Phase 2: Unified orchestrator with sequential VRAM handover (Mona)
+├── ai_engine.py                   # Phase 2: Public API & Contract B facade for Gradio UI layer (Mona)
 ├── checkpoints/                   # Model weights & checkpoint management (Mona)
 │   ├── README.md                  # Checkpoint architecture & weight specifications
 │   ├── download_checkpoints.py    # Automated Hugging Face download utility
@@ -24,7 +29,7 @@ engine/
 
 ---
 
-## 🔄 Computational Pipeline Flow
+## 🔄 Computational Pipeline Flow & Sequential VRAM Handover
 
 ```
 +------------------------+
@@ -40,22 +45,40 @@ engine/
 | - Gaussian adaptive thresholding -> Lineart Mask        |
 +---------------------------------------------------------+
            │
-           ▼ (Clean 512x512 RGB & Binary Lineart Conditioning)
+           ▼ (Contract A: 512x512 Lineart & Color Tensors)
 +---------------------------------------------------------+
-| engine/test_pipeline.py & Diffusion Pipeline            |
-| - Stable Diffusion v1.5 + ControlNet Scribble           |
-| - FP16 Half-Precision on NVIDIA GPU (T4 / V100)          |
-| - Memory-efficient attention (SDPA / xFormers)          |
-| - Multi-view 2.5D asset generation                      |
+| engine/generator.py (SketchDiffusionGenerator)          |
+| - Stable Diffusion v1.5 + ControlNet Scribble (FP16)    |
+| - Prompt conditioning + 3D quality booster              |
+| - Calibrated scale (0.85) & CFG (7.5)                   |
+| - Peak VRAM: ~5.2 GB                                    |
 +---------------------------------------------------------+
            │
-           ▼ (Multi-view Normal & Color Projections)
+           ▼ [SEQUENTIAL VRAM HANDOVER]
+           │ Evacuate generator weights from VRAM
+           │ torch.cuda.empty_cache(); gc.collect()
+           │
 +---------------------------------------------------------+
-| 3D Reconstruction Backbone (InstantMesh / Unique3D)     |
-| - Large Reconstruction Model (LRM) Transformer          |
-| - Instant triplane / NeRF representation                |
-| - Marching Tetrahedra mesh extraction                   |
-| -> outputs/asset.obj / outputs/asset.glb                |
+| engine/reconstruction.py (MeshReconstructor)            |
+| - Depth & surface normal estimation                     |
+| - Pretrained InstantMesh / Unique3D backbone (FP16)     |
+| - Peak VRAM: ~6.5 GB                                    |
++---------------------------------------------------------+
+           │
+           ▼
++---------------------------------------------------------+
+| engine/mesh_utils.py (Watertight Manifold Repair §3.4)  |
+| - Duplicate/degenerate face removal                     |
+| - Vertex merging within tolerance                       |
+| - Boundary loop hole-filling                            |
+| - Normal winding and inversion fixing                   |
+| - Guaranteed is_watertight == True                      |
++---------------------------------------------------------+
+           │
+           ▼ (Contract B: GenerationResult to UI & Session)
++---------------------------------------------------------+
+| Mesh Exporters (OBJ, GLB, STL, PLY)                     |
+| -> outputs/sketch2shape_model.obj / .glb                |
 +---------------------------------------------------------+
 ```
 
@@ -64,12 +87,12 @@ engine/
 ## 🚀 Execution Commands
 
 ```bash
-# 1. Verify GPU, VRAM, and FP16 half-precision support
-python check_gpu.py
+# 1. Run full end-to-end inference pipeline from CLI
+python engine/pipeline.py path/to/sketch.png --prompt "ceramic coffee mug" --output outputs/mug.glb --format glb
 
-# 2. Inspect checkpoint structure and verify local model weights
-python engine/checkpoints/download_checkpoints.py --verify
+# 2. Run automated test suite verifying all 16 pipeline contracts
+python -m unittest tests/test_ai_inference.py -v
 
-# 3. Run Pipeline Smoke Test (verifies dependencies, auth, and pipeline loading)
-python engine/test_pipeline.py
+# 3. Launch the Gradio UI connected to the live AI engine
+python ui/app.py
 ```

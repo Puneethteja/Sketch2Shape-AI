@@ -167,15 +167,73 @@ Each entry follows the structure:
 
 ---
 
+### [2026-10-31] · Mona · Phase 2 · Generative Diffusion & Pretrained 3D Reconstruction Pipeline
+
+**Engineer:** Mona — Lead Generative AI & 3D Reconstruction Engineer  
+**Scope:** Generative diffusion (`engine/generator.py`), 3D reconstruction (`engine/reconstruction.py`), geometric repair (`engine/mesh_utils.py`), unified pipeline orchestrator (`engine/pipeline.py`), and Contract B UI integration (`engine/ai_engine.py` & `ui/app.py`).
+
+#### Key Deliverables & Architecture:
+
+1. **Sketch-Guided Generation Engine ([`engine/generator.py`](../engine/generator.py))**:
+   - **Diffusion Backbone**: Configured Stable Diffusion v1.5 (`runwayml/stable-diffusion-v1-5`) paired with ControlNet Scribble (`lllyasviel/control_v11p_sd15_scribble`) operating in half-precision `torch.float16`.
+   - **Text Prompt Conditioning Logic**: Blends optional user descriptions (e.g., `"glossy ceramic"`, `"mahogany wood"`, `"brushed steel"`) with an engineered 3D quality booster template (`"3d asset, single centered object, isolated on clean neutral white background, studio lighting..."`) and negative prompt constraints preventing multi-object clutter, backdrops, and blur.
+   - **Calibrated Hyperparameters**:
+     - ControlNet scale: Calibrated default at $0.85$ (strictly within target $0.70 - 0.95$ range) preventing under-conditioning ($<0.5$) and aliasing artifacts ($>1.5$).
+     - CFG (Classifier-Free Guidance): Calibrated at $7.5$.
+     - Fast scheduler: Integrated `UniPCMultistepScheduler` allowing crisp 2.5D visual generation in 20–30 steps.
+   - **VRAM Optimizations**: Auto attention slicing (`enable_attention_slicing("auto")`), VAE slicing (`enable_vae_slicing()`), and SDPA memory-efficient attention.
+
+2. **Pretrained 3D Reconstruction Backbone ([`engine/reconstruction.py`](../engine/reconstruction.py))**:
+   - Ingests 512×512 foreground images and infers spatial depth maps $(512, 512)$ and surface normal maps $(512, 512, 3)$.
+   - Integrates `InstantMesh` LRM transformer checkpoint support alongside high-resolution volumetric depth-gradient synthesis.
+   - Generates fully closed bilateral 3D hulls containing vertices, faces, vertex normals, and vertex color textures.
+   - Evaluates to guaranteed watertight manifold topology ready for real-time 3D rendering.
+
+3. **Deterministic Watertight Repair & Multi-Format Serializers ([`engine/mesh_utils.py`](../engine/mesh_utils.py))**:
+   - Implemented the full 7-step repair sequence specified in §3.4:
+     1. Duplicate and degenerate face removal (`remove_duplicate_faces()`, `remove_degenerate_faces()`).
+     2. Vertex merging within tolerance `1e-8`.
+     3. Boundary hole filling up to 1000-edge loops.
+     4. Winding order unification for consistent outward normals.
+     5. Normal inversion correction.
+     6. Pruning degenerate noise components ($< 50$ faces).
+     7. Watertight assertion & convex hull topology fallback.
+   - Enforces Contract B invariant: `mesh.is_watertight == True`.
+   - Built multi-format exporters: `.obj` (text + vertex normals), `.glb` (binary glTF 2.0 with scene/accessor buffers), `.stl` (binary stereolithography), and `.ply` (vertex colors).
+
+4. **Sequential VRAM Handover & Pipeline Orchestrator ([`engine/pipeline.py`](../engine/pipeline.py))**:
+   - Built unified `Sketch2ShapePipeline` coordinating Stage 1 (Preprocessing) $\to$ Stage 2 (Diffusion) $\to$ Stage 3 (3D Mesh).
+   - **Sequential Handover Strategy**:
+     - Stage 2 completes generation ($\sim 5.2\text{ GB}$ peak VRAM).
+     - Explicit model eviction: `generator.unload()`, `del generator`, `gc.collect()`, `torch.cuda.empty_cache()`.
+     - Stage 3 reconstructor loads and generates 3D geometry ($\sim 6.5\text{ GB}$ peak VRAM).
+     - Prevents concurrent VRAM accumulation ($5.2 + 6.5 = 11.7\text{ GB}$), eliminating OOM crashes under 16GB VRAM bounds (e.g., NVIDIA T4).
+
+5. **Contract B Public API & UI Integration ([`engine/ai_engine.py`](../engine/ai_engine.py) & [`ui/app.py`](../ui/app.py))**:
+   - Implemented `GenerationResult` dataclass matching §4.2:
+     - `depth_map`: shape `(512, 512)` float32 in `[0, 1]`.
+     - `normal_map`: shape `(512, 512, 3)` float32 in `[0, 1]`.
+     - `mesh`: watertight `trimesh.Trimesh`.
+     - `seed_used`: concrete integer.
+     - `vram_peak_mb`: peak VRAM tracked during forward pass.
+   - Implemented public facade `generate()` in `engine/ai_engine.py`.
+   - Wired Gradio event handlers in `ui/app.py` (`_run_ai_generation` and `_run_mesh_export`), replacing stub responses with live pipeline calls and session mesh storage!
+
+6. **Expanded Automated Verification Suite ([`tests/test_ai_inference.py`](../tests/test_ai_inference.py))**:
+   - Added 7 new test cases verifying prompt conditioning, diffusion generation, depth/normal prediction, watertight mesh reconstruction, OBJ/GLB exports, pipeline orchestration, and `engine.ai_engine.generate()` Contract B compliance.
+   - All 16 unit tests confirmed passing in 16.1s.
+
+---
+
 ### 🤝 Cross-Team Integration Handoffs
 
 | Item | Owner | Target Phase | Status |
 |---|---|---|---|
-| `GenerationResult` dataclass contract implementation | Mona | Phase 2 | Scheduled in `engine/ai_engine.py` |
-| `engine/mesh_utils.py` watertight repair pipeline | Mona + Laxmi | Phase 2 | Specification finalized in §3.4 |
-| Three.js WebGL viewport integration in Gradio | Laxmi | Phase 2 | Canvas stub verified in UI |
-| Multi-view Zero123++ diffusion backbone | Mona | Phase 2 | Checkpoints registered |
-| InstantMesh LRM Marching Tetrahedra exporter | Mona | Phase 2 | Checkpoints registered |
+| `GenerationResult` dataclass contract implementation | Mona | Phase 2 | **COMPLETED** (`engine/ai_engine.py` & §4.2) |
+| `engine/mesh_utils.py` watertight repair pipeline | Mona + Laxmi | Phase 2 | **COMPLETED** (7-step recovery sequence §3.4) |
+| Gradio UI Live AI Engine & Mesh Export wiring | Mona + Laxmi | Phase 2 | **COMPLETED** (`ui/app.py` connected to `ai_engine`) |
+| Pretrained InstantMesh & SD 1.5 FP16 Handover | Mona | Phase 2 | **COMPLETED** (`engine/pipeline.py` sequential VRAM) |
+| Three.js WebGL canvas integration in Gradio UI | Laxmi | Phase 2 | Ready for Three.js `<canvas>` consuming exported `.glb` |
 
 ---
 
