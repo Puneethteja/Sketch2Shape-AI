@@ -39,6 +39,20 @@ try:
 except ImportError:
     _MESH_UTILS_AVAILABLE = False
 
+try:
+    from engine.usp import (
+        compute_sketch_fidelity,
+        generate_multiview_projections,
+        ComponentEditor,
+        generate_design_variations,
+        COMPONENT_PRESETS,
+        MATERIAL_PALETTES,
+        DESIGN_STYLE_PRESETS,
+    )
+    _USP_AVAILABLE = True
+except ImportError:
+    _USP_AVAILABLE = False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -586,6 +600,7 @@ def _run_ai_generation(
         _LAST_GENERATED_MESH = validated_mesh
         _SESSION["current_mesh"] = validated_mesh
         _SESSION["last_result"] = result
+        _SESSION["current_source"] = source
 
         depth_preview = None
         if hasattr(result, "depth_image") and result.depth_image is not None:
@@ -665,12 +680,132 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
     gr.Info(f"No active mesh in session. Generate a 3D asset first.")
     return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
 
+def _run_fidelity_evaluation(
+    canvas_image: Optional[np.ndarray],
+    uploaded_file: Optional[str],
+    canvas_data_url: Optional[str],
+) -> Tuple[Optional[Image.Image], str]:
+    if not _USP_AVAILABLE:
+        return None, "⚠ USP engine module not available."
+    source = _SESSION.get("current_source") or _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+    if source is None:
+        return None, "⚠ No sketch found in session. Please draw or upload a sketch first."
+    mesh = _LAST_GENERATED_MESH or _SESSION.get("current_mesh")
+    if mesh is None:
+        return None, "⚠ No 3D model generated yet. Please click 'Generate 3D Asset' first."
+    try:
+        report = compute_sketch_fidelity(source, mesh)
+        msg = f"★ Fidelity Score: {report.percentage}% ({report.rating})\n{report.explanation}"
+        return report.comparison_image, msg
+    except Exception as exc:
+        return None, f"✘ Fidelity evaluation notice: {exc}"
+
+
+def _run_multiview_generation() -> Tuple[Optional[Image.Image], str]:
+    if not _USP_AVAILABLE:
+        return None, "⚠ USP engine module not available."
+    mesh = _LAST_GENERATED_MESH or _SESSION.get("current_mesh")
+    if mesh is None:
+        return None, "⚠ No 3D model generated yet. Please click 'Generate 3D Asset' first."
+    try:
+        composite = generate_multiview_projections(mesh)
+        return composite, "✔ Multi-View Projections generated: Front, Right Side, Back, and Top angles."
+    except Exception as exc:
+        return None, f"✘ Multi-View projection notice: {exc}"
+
+
+def _run_component_edit(
+    component_name: str,
+    material_name: str,
+    custom_color: str,
+) -> Tuple[Optional[str], str, str]:
+    global _LAST_GENERATED_MESH
+    if not _USP_AVAILABLE:
+        return None, "⚠ USP engine module not available.", ""
+    mesh = _LAST_GENERATED_MESH or _SESSION.get("current_mesh")
+    if mesh is None:
+        return None, "⚠ No active 3D model in session. Generate a 3D asset first.", ""
+    try:
+        updated_mesh = ComponentEditor.apply_edit(mesh, component_name, material_name, custom_color)
+        from utils.mesh_utils import repair_mesh, export_mesh
+        try:
+            validated_mesh = repair_mesh(updated_mesh, strip_floating=False, fill_holes=True, center_and_scale=False)
+        except Exception:
+            validated_mesh = updated_mesh
+        _LAST_GENERATED_MESH = validated_mesh
+        _SESSION["current_mesh"] = validated_mesh
+
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        export_glb_path = outputs_dir / "sketch2shape_generated.glb"
+        export_mesh(validated_mesh, export_glb_path, export_format="glb")
+
+        status = f"✔ Component '{component_name}' updated with '{material_name}'. 3D model refreshed."
+        glb_url = f"/file={export_glb_path.as_posix()}?t={int(time.time())}"
+        return str(export_glb_path), status, glb_url
+    except Exception as exc:
+        return None, f"✘ Component editing notice: {exc}", ""
+
+
+def _run_design_variations(
+    prompt_input: str,
+    canvas_image: Optional[np.ndarray],
+    uploaded_file: Optional[str],
+    canvas_data_url: Optional[str],
+) -> Tuple[Optional[Image.Image], Optional[Image.Image], Optional[Image.Image], str]:
+    if not _USP_AVAILABLE:
+        return None, None, None, "⚠ USP engine module not available."
+    source = _SESSION.get("current_source") or _resolve_input_source(canvas_image, uploaded_file, canvas_data_url)
+    if source is None:
+        return None, None, None, "⚠ No sketch found in session. Please draw or upload a sketch first."
+    try:
+        styles = ["Minimalist Porcelain", "Brushed Titanium Metal", "Organic Polished Walnut"]
+        variations = generate_design_variations(source, prompt_input, selected_styles=styles)
+        imgs = [v[1] for v in variations]
+        while len(imgs) < 3:
+            imgs.append(None)
+        if "variation_images" not in _SESSION:
+            _SESSION["variation_images"] = {}
+        for idx, s in enumerate(styles):
+            if idx < len(imgs) and imgs[idx] is not None:
+                _SESSION["variation_images"][s] = imgs[idx]
+        return imgs[0], imgs[1], imgs[2], "✔ 3 AI Design Variations generated from your sketch! Click 'Reconstruct' under any candidate."
+    except Exception as exc:
+        return None, None, None, f"✘ Design variations notice: {exc}"
+
+
+def _reconstruct_variation_style(
+    style_key: str,
+    prompt_input: str,
+    controlnet_scale: float,
+    num_inference_steps: int,
+    seed: int,
+    canvas_image: Optional[np.ndarray],
+    uploaded_file: Optional[str],
+    canvas_data_url: Optional[str],
+) -> GenerationOutput:
+    style_desc = DESIGN_STYLE_PRESETS.get(style_key, style_key)
+    full_prompt = f"{prompt_input.strip()}, {style_desc}" if prompt_input.strip() else style_desc
+    variation_img = _SESSION.get("variation_images", {}).get(style_key)
+    return _run_ai_generation(
+        prompt=full_prompt,
+        controlnet_scale=controlnet_scale,
+        num_inference_steps=num_inference_steps,
+        seed=seed,
+        canvas_image=canvas_image,
+        uploaded_file=uploaded_file,
+        canvas_data_url=canvas_data_url,
+        preprocessed_preview=variation_img,
+    )
+
+
 def _clear_session() -> Tuple:
     global _LAST_GENERATED_MESH
     _LAST_GENERATED_MESH = None
     _SESSION["current_mesh"] = None
     _SESSION["current_source"] = None
     _SESSION["last_result"] = None
+    _SESSION["variation_images"] = {}
     gr.Info("Session reset.")
     return (
         None,
@@ -866,6 +1001,48 @@ def build_ui() -> gr.Blocks:
                     visible=True,
                 )
 
+        with gr.Accordion("🌟 Four Unique Selling Propositions (USPs)", open=True, elem_id="usp-suite-accordion"):
+            with gr.Tabs():
+                with gr.Tab("1. 🎯 Sketch Fidelity Score"):
+                    gr.Markdown("Evaluate how closely the 3D model's silhouette preserves the hand-drawn sketch contours.")
+                    with gr.Row():
+                        btn_eval_fidelity = gr.Button("Calculate Fidelity Score", variant="secondary", size="sm")
+                    fidelity_status = gr.Textbox(label="Silhouette Similarity & Alignment Assessment", interactive=False, lines=2)
+                    fidelity_preview = gr.Image(label="Contour Alignment Overlay (Green: Overlap, Blue: 3D Hull)", type="pil", interactive=False, height=280)
+
+                with gr.Tab("2. 🌐 Multi-View Intelligence"):
+                    gr.Markdown("Inspect the 3D asset from multiple synchronized viewpoints (Front, Right Side, Back, Top). Use viewer toolbar buttons for interactive 360° camera presets.")
+                    with gr.Row():
+                        btn_gen_multiview = gr.Button("Render 4-View Orthographic Collage", variant="secondary", size="sm")
+                    multiview_status = gr.Textbox(label="Multi-View Status", interactive=False, lines=1)
+                    multiview_preview = gr.Image(label="4-Angle Orthographic Views (Front / Side / Back / Top)", type="pil", interactive=False, height=320)
+
+                with gr.Tab("3. 🎨 Component-Level Editing"):
+                    gr.Markdown("Select and customize individual regions of the 3D asset independently without altering overall geometry.")
+                    with gr.Row():
+                        comp_dropdown = gr.Dropdown(label="Target Component", choices=COMPONENT_PRESETS if _USP_AVAILABLE else ["Upper Section / Top Rim", "Central Body / Core", "Base / Stand / Legs"], value="Base / Stand / Legs", scale=1)
+                        mat_dropdown = gr.Dropdown(label="Material Palette Preset", choices=list(MATERIAL_PALETTES.keys()) if _USP_AVAILABLE else ["Matte Black", "Polished Walnut Wood", "Brushed Titanium", "Porcelain Ceramic", "Terracotta Clay", "Electric Cobalt", "Gloss Gold", "Forest Olive"], value="Polished Walnut Wood", scale=1)
+                        custom_color = gr.ColorPicker(label="Custom Color Hex", value="#784b2d", scale=1)
+                    with gr.Row():
+                        btn_apply_component = gr.Button("Apply Component Material Edit", variant="primary", size="sm")
+                    comp_status = gr.Textbox(label="Component Edit Status", interactive=False, lines=1)
+
+                with gr.Tab("4. ⚡ AI Design Variations"):
+                    gr.Markdown("Generate multiple aesthetic styles from the same structural sketch without redrawing.")
+                    with gr.Row():
+                        btn_gen_variations = gr.Button("Generate 3 Style Variations from Sketch", variant="secondary", size="sm")
+                    var_status = gr.Textbox(label="Variations Status", interactive=False, lines=1)
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            var_img_1 = gr.Image(label="Variation 1: Minimalist Porcelain", type="pil", interactive=False, height=200)
+                            btn_reconstruct_var_1 = gr.Button("Reconstruct as 3D (Porcelain)", variant="secondary", size="sm")
+                        with gr.Column(scale=1):
+                            var_img_2 = gr.Image(label="Variation 2: Brushed Titanium", type="pil", interactive=False, height=200)
+                            btn_reconstruct_var_2 = gr.Button("Reconstruct as 3D (Titanium)", variant="secondary", size="sm")
+                        with gr.Column(scale=1):
+                            var_img_3 = gr.Image(label="Variation 3: Polished Walnut", type="pil", interactive=False, height=200)
+                            btn_reconstruct_var_3 = gr.Button("Reconstruct as 3D (Walnut)", variant="secondary", size="sm")
+
         status_bar = gr.Textbox(
             label="Pipeline Status",
             value="Ready.",
@@ -916,6 +1093,51 @@ def build_ui() -> gr.Blocks:
                 status_bar,
             ],
             js="() => { if (window.s2sClearCanvas) window.s2sClearCanvas(); }",
+        )
+
+        btn_eval_fidelity.click(
+            fn=_run_fidelity_evaluation,
+            inputs=[canvas, file_upload, canvas_data_holder],
+            outputs=[fidelity_preview, fidelity_status],
+        )
+
+        btn_gen_multiview.click(
+            fn=_run_multiview_generation,
+            inputs=[],
+            outputs=[multiview_preview, multiview_status],
+        )
+
+        btn_apply_component.click(
+            fn=_run_component_edit,
+            inputs=[comp_dropdown, mat_dropdown, custom_color],
+            outputs=[export_file, comp_status, glb_url_holder],
+        )
+
+        btn_gen_variations.click(
+            fn=_run_design_variations,
+            inputs=[prompt_input, canvas, file_upload, canvas_data_holder],
+            outputs=[var_img_1, var_img_2, var_img_3, var_status],
+        )
+
+        btn_reconstruct_var_1.click(
+            fn=lambda p, s, st, sd, c, f, ch: _reconstruct_variation_style("Minimalist Porcelain", p, s, st, sd, c, f, ch),
+            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input, canvas, file_upload, canvas_data_holder],
+            outputs=[depth_view, export_file, status_bar, glb_url_holder],
+            js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('Reconstructing Minimalist Porcelain 3D asset...', 20); } }",
+        )
+
+        btn_reconstruct_var_2.click(
+            fn=lambda p, s, st, sd, c, f, ch: _reconstruct_variation_style("Brushed Titanium Metal", p, s, st, sd, c, f, ch),
+            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input, canvas, file_upload, canvas_data_holder],
+            outputs=[depth_view, export_file, status_bar, glb_url_holder],
+            js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('Reconstructing Brushed Titanium 3D asset...', 20); } }",
+        )
+
+        btn_reconstruct_var_3.click(
+            fn=lambda p, s, st, sd, c, f, ch: _reconstruct_variation_style("Organic Polished Walnut", p, s, st, sd, c, f, ch),
+            inputs=[prompt_input, controlnet_scale, inference_steps, seed_input, canvas, file_upload, canvas_data_holder],
+            outputs=[depth_view, export_file, status_bar, glb_url_holder],
+            js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('Reconstructing Polished Walnut 3D asset...', 20); } }",
         )
 
     return app
