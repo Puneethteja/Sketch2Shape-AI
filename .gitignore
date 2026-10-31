@@ -30,7 +30,12 @@ build/
 *.pt
 *.ckpt
 *.bin
-checkpoints/
+*.onnx
+checkpoints/**/*.safetensors
+checkpoints/**/*.pth
+checkpoints/**/*.pt
+checkpoints/**/*.bin
+checkpoints/**/*.onnx
 weights/
 models/
 

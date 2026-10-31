@@ -180,3 +180,30 @@ Each entry follows the structure:
 ---
 
 *Sketch2Shape AI — TechZephyr 4.0 Hackathon · IIT Bhubaneswar*
+
+
+---
+
+### [2026-10-31] · Puneeth · Phase 1 · Core Infrastructure, Data Preprocessing & AI Pipeline Verification
+
+**Engineer:** Puneeth — Lead Data & Infrastructure Engineer  
+**Scope:** Core repo structure, data preprocessing (`utils/preprocessing.py` / `engine/preprocessing.py`), GPU validation (`engine/check_gpu.py`), checkpoint architecture, inference smoke test (`engine/test_pipeline.py`), and test suite verification.
+
+#### Deliverables shipped
+
+| Artifact | Path | Description |
+|---|---|---|
+| Preprocessing API | [`utils/preprocessing.py`](../utils/preprocessing.py) & [`engine/preprocessing.py`](../engine/preprocessing.py) | Ingest (canvas/file/bytes/PIL), letterbox 512x512 pad/resize, bilateral filter, binary lineart extraction |
+| GPU Diagnostic Tool | [`engine/check_gpu.py`](../engine/check_gpu.py) | Automated CUDA availability, VRAM allocation inspection, and FP16 support verification |
+| Pipeline Smoke Test | [`engine/test_pipeline.py`](../engine/test_pipeline.py) | Dependency validation, dry-run architecture test, and live FP16 Diffusers + ControlNet loading |
+| Checkpoints Scaffold | [`checkpoints/`](../checkpoints/) | Standardized directories for SD1.5, ControlNet, 3D reconstruction, and rembg |
+| Shared Image Utils | [`utils/image_utils.py`](../utils/image_utils.py) | Color-safe I/O, format conversions, side-by-side visualizer, alpha mask overlays |
+| Extended Test Suite | [`tests/`](../tests/) | 57/57 passing unit & integration tests covering all preprocessing, hardware checks, and utility functions |
+| Dependency Spec | [`requirements.txt`](../requirements.txt) & [`environment.yml`](../environment.yml) | Precision package versions with CUDA wheels and UI dependencies (`gradio`, `streamlit`) |
+
+#### Hardware Scalability & Laptop Execution Strategy
+- For standard laptops without high-end discrete GPUs, the pipeline supports:
+  1. **CPU/Fallback Mode:** Automatic fallback with float32 computation.
+  2. **Model Offloading:** Diffusers `enable_model_cpu_offload()` to operate in < 3GB VRAM.
+  3. **Lightweight Backbones:** SD-Turbo 1-step diffusion / LCM-LoRA and fast Depth-to-Mesh / Marching Cubes extrusion.
+  4. **Cloud Demo Tunneling:** Zero-cost T4 GPU execution via Google Colab / Hugging Face Spaces tunneling via Gradio public share links.
