@@ -403,7 +403,6 @@ Each entry follows the structure:
 - **For Mona (AI Engine)**: The output of `utils.segmentation.isolate_and_center()` provides the exact 512×512 centered subject input required by InstantMesh / Unique3D.
 - **For Laxmi (Frontend UI)**: The `.glb` exporter from `utils.mesh_utils.export_mesh()` produces binary glTF files directly compatible with the Gradio `gr.Model3D` component and Three.js WebGL viewport.
 
-
 ---
 
 ### [2026-10-31] · Mona · Phase 3 · Stage Linkage, Tensor Handoff & End-to-End Integration
