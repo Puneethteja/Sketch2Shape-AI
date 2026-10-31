@@ -33,6 +33,11 @@ from PIL import Image
 
 logger = logging.getLogger("sketch2shape.linker")
 
+try:
+    from engine.multiview import MultiViewResult
+except ImportError:
+    MultiViewResult = None
+
 
 @dataclass
 class StageHandoff:
@@ -51,6 +56,7 @@ class StageHandoff:
     gen_elapsed: float = 0.0
     prompt: str = ""
     original_sketch: Optional[Any] = None
+    multi_view_result: Optional[Any] = None
     metadata: dict = field(default_factory=dict)
 
 
@@ -265,6 +271,7 @@ class StageLinker:
             fused_depth,
             prompt=getattr(handoff, "prompt", ""),
             sketch_input=getattr(handoff, "original_sketch", None),
+            multi_view_result=getattr(handoff, "multi_view_result", None),
         )
 
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)

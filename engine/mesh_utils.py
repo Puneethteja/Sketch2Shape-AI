@@ -369,3 +369,42 @@ def repair_mesh(mesh: Any, *, verbose: bool = False) -> Any:
         return mesh
 
     return mesh
+
+
+def create_fallback_mesh(radius: float = 1.0):
+    """Creates a canonical watertight fallback mesh."""
+    if TRIMESH_AVAILABLE and trimesh is not None:
+        try:
+            return trimesh.creation.icosphere(subdivisions=2, radius=radius)
+        except Exception:
+            pass
+    verts = np.array([
+        [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]
+    ], dtype=np.float32) * (radius * 0.5)
+    faces = np.array([
+        [0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6],
+        [0, 4, 5], [0, 5, 1], [1, 5, 6], [1, 6, 2],
+        [2, 6, 7], [2, 7, 3], [3, 7, 4], [3, 4, 0]
+    ], dtype=np.int32)
+    return TrimeshFallback(vertices=verts, faces=faces, is_watertight=True)
+
+
+def export_mesh(mesh, path, export_format: str = "glb") -> str:
+    """Exports mesh to GLB, OBJ, or STL format."""
+    path = Path(path)
+    fmt = export_format.lower().lstrip(".")
+    if fmt == "stl":
+        return export_to_stl(mesh, path)
+    if hasattr(mesh, "export"):
+        return mesh.export(str(path), file_type=fmt)
+    raise ValueError(f"Mesh object cannot be exported: {mesh}")
+
+
+def load_mesh(source):
+    """Loads a 3D mesh or returns fallback."""
+    if TRIMESH_AVAILABLE and trimesh is not None:
+        return trimesh.load(source)
+    if isinstance(source, (str, Path)):
+        return create_fallback_mesh()
+    return source
