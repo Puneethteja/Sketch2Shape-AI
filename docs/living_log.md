@@ -546,3 +546,31 @@ These are fused with the reconstructor's own depth estimate at a 45/55 blend rat
 5. **Noisy & Low-Resolution Preprocessing**:
    - Gaussian and salt-and-pepper sketch noise are filtered while preserving crisp line boundaries.
    - Low-resolution inputs (down to 16x16) and extreme aspect ratios (up to 12.5:1) are padded and normalized into standard 512x512 RGB tensors with intact channel ordering.
+
+
+---
+
+### [2026-10-31] • Puneeth • Phase 5 • Artifact Curation & Backup Status
+
+**Engineer:** Puneeth — Lead Data & Infrastructure Engineer  
+**Scope:** Demo asset curation (`outputs/samples/`), pre-computed test suite manifest, and offline fallback runner (`utils/backup_runner.py`) for live hackathon evaluation.
+
+#### Curated Demo Artifact Suite
+
+| Sample ID | Object Name | Prompt Guidance | Seed | Vertices | Faces | Watertight | Volume | Artifact Bundle |
+|---|---|---|:---:|:---:|:---:|:---:|:---:|---|
+| `sample_01_vase` | Ceramic Vase | *"smooth porcelain ceramic vase with curved neck and round body"* | 101 | 898 | 1,792 | **True** | 0.3288 | `.png`, `lineart.png`, `.glb`, `.obj` |
+| `sample_02_mug` | Coffee Mug | *"modern minimalist ceramic coffee mug with solid handle"* | 202 | 750 | 1,496 | **True** | 0.4047 | `.png`, `lineart.png`, `.glb`, `.obj` |
+| `sample_03_chair` | Modern Chair | *"minimalist geometric wooden chair with four legs and backrest"* | 303 | 350 | 696 | **True** | 0.3760 | `.png`, `lineart.png`, `.glb`, `.obj` |
+| `sample_04_bottle` | Water Bottle | *"tall reusable steel water bottle with screw cap"* | 404 | 752 | 1,500 | **True** | 0.2776 | `.png`, `lineart.png`, `.glb`, `.obj` |
+| `sample_05_bowl` | Wooden Bowl | *"deep hand-carved polished wooden salad bowl"* | 505 | 1,252 | 2,500 | **True** | 0.3449 | `.png`, `lineart.png`, `.glb`, `.obj` |
+
+#### Offline Backup Runner Architecture (`utils/backup_runner.py`)
+
+1. **Manifest Parsing & Validation**:
+   - Parses `outputs/samples/manifest.json` and exposes structured `DemoSample` records with complete geometric metrics.
+   - Built-in validation check (`--verify`) asserts presence and non-zero byte size for all sketch drawings, preprocessed lineart masks, `.glb` models, and Wavefront `.obj` files.
+
+2. **Zero-Latency Live Demo Recovery**:
+   - Supports fuzzy matching and direct ID lookup (`--load <id|keyword>`).
+   - Copies pre-computed `.glb` models directly to `outputs/sketch2shape_generated.glb` and `outputs/preview_{seed}.glb`, instantly feeding the WebGL 3D previewer in `ui/viewer.js` if GPU compute times out or network connectivity fails during evaluation.
