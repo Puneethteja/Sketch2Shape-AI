@@ -1692,3 +1692,140 @@ body {
 .sep {
   color: var(--text-muted);
 }
+
+
+/* ==========================================================================
+   Intelligent Design & USP Suite Styling
+   ========================================================================== */
+.usp-suite-panel {
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-card);
+  padding: 16px;
+  border-radius: var(--radius-md);
+}
+
+.usp-nav-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.usp-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.usp-tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.usp-tab-btn.active {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-color: var(--border-default);
+  font-weight: 600;
+}
+
+.usp-tab-pane {
+  display: none;
+}
+
+.usp-tab-pane.active {
+  display: block;
+}
+
+.usp-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.usp-content-area {
+  margin-top: 12px;
+}
+
+.usp-image-frame {
+  width: 100%;
+  max-height: 280px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: #090d16;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.usp-image-frame img {
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+}
+
+.camera-pill-group {
+  display: flex;
+  gap: 4px;
+}
+
+.usp-variations-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.usp-var-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.usp-var-card:hover {
+  border-color: var(--accent-blue);
+  transform: translateY(-2px);
+}
+
+.usp-var-thumb {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+}
+
+.usp-var-info {
+  padding: 8px;
+}
+
+.usp-var-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+}
+
+.usp-var-prompt {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

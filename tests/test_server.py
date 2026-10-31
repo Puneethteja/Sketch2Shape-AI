@@ -115,3 +115,52 @@ def test_generate_api(client):
     assert data["faces"] > 0
     assert isinstance(data["is_watertight"], bool)
     assert data["seed"] == 42
+
+
+def test_usp_components_api(client):
+    response = client.get("/api/usp/components")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert len(data["components"]) > 0
+    assert len(data["materials"]) > 0
+    assert "material_palettes" in data
+
+
+def test_usp_multiview_api(client):
+    response = client.post("/api/usp/multiview")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["multiview_url"].startswith("data:image/png;base64,")
+    assert "Front" in data["camera_presets"]
+
+
+def test_usp_fidelity_api(client):
+    img = Image.new("RGB", (512, 512), color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    response = client.post("/api/usp/fidelity", json={"sketch": b64, "view": "front"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert "percentage" in data
+    assert "rating" in data
+    assert data["comparison_image_url"].startswith("data:image/png;base64,")
+
+
+def test_usp_component_edit_api(client):
+    response = client.post(
+        "/api/usp/component-edit",
+        json={
+            "component": "Upper Section / Top Rim",
+            "material": "Brushed Titanium",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["glb_url"].startswith("/outputs/")
+    assert data["component"] == "Upper Section / Top Rim"

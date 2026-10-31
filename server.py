@@ -36,6 +36,16 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.ai_engine import generate, get_pipeline, GenerationResult
 from engine.preprocessing import preprocess, ingest
+from engine.usp import (
+    compute_sketch_fidelity,
+    generate_multiview_projections,
+    generate_design_variations,
+    ComponentEditor,
+    CAMERA_PRESETS,
+    MATERIAL_PALETTES,
+    COMPONENT_PRESETS,
+    DESIGN_STYLE_PRESETS,
+)
 from check_gpu import inspect_system
 from utils.mesh_utils import export_mesh, repair_mesh
 
@@ -69,6 +79,23 @@ class GenerateRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     format: str = Field(default="glb", description="Desired 3D exchange format (glb, obj, stl, ply)")
+
+
+class FidelityRequest(BaseModel):
+    sketch: str = Field(..., description="Base64 data URL or path of the input sketch")
+    view: str = Field(default="front", description="Camera projection plane ('front', 'side', 'top')")
+
+
+class ComponentEditRequest(BaseModel):
+    component: str = Field(..., description="Component zone to edit (e.g. Upper Section / Top Rim)")
+    material: str = Field(..., description="Target material palette name")
+    custom_color: Optional[str] = Field(default=None, description="Optional hex color string (#RRGGBB)")
+
+
+class VariationsRequest(BaseModel):
+    sketch: str = Field(..., description="Base64 data URL of the input sketch")
+    prompt: str = Field(default="", description="Base user prompt to blend with style presets")
+    styles: Optional[list[str]] = Field(default=None, description="List of style preset names to run")
 
 
 # ── Application Factory ──────────────────────────────────────────────────────
@@ -280,6 +307,144 @@ def create_app() -> FastAPI:
         except Exception as exc:
             logger.exception(f"Export failed: {exc}")
             raise HTTPException(status_code=500, detail=f"Export failed: {str(exc)}")
+
+    # ── USP Suite Endpoints ──────────────────────────────────────────────────
+
+    def _get_active_mesh():
+        """Helper to get current active mesh from memory or sample fallback."""
+        global _LAST_GENERATED_RESULT
+        if _LAST_GENERATED_RESULT is not None and _LAST_GENERATED_RESULT.mesh is not None:
+            return _LAST_GENERATED_RESULT.mesh
+        # Fallback to default sample vase model
+        fallback_glb = web_dir / "assets" / "samples" / "sample_01_vase" / "model.glb"
+        if fallback_glb.exists():
+            try:
+                import trimesh
+                return trimesh.load(str(fallback_glb))
+            except Exception as exc:
+                logger.warning(f"Could not load fallback sample mesh: {exc}")
+        return None
+
+    @app.post("/api/usp/fidelity")
+    async def api_fidelity_score(payload: FidelityRequest) -> Dict[str, Any]:
+        """USP 1: Compute geometric IoU, Dice coefficient, and visual contour overlap."""
+        try:
+            mesh = _get_active_mesh()
+            if mesh is None:
+                raise HTTPException(status_code=404, detail="No active 3D model available for fidelity comparison.")
+
+            report = compute_sketch_fidelity(
+                sketch_input=payload.sketch,
+                mesh=mesh,
+                view=payload.view,
+                canvas_size=512,
+            )
+
+            return {
+                "status": "success",
+                "percentage": report.percentage,
+                "rating": report.rating,
+                "explanation": report.explanation,
+                "iou_score": report.iou_score,
+                "dice_score": report.dice_score,
+                "metrics": report.metrics,
+                "comparison_image_url": _pil_to_data_url(report.comparison_image),
+            }
+        except Exception as exc:
+            logger.exception(f"Fidelity calculation failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Fidelity error: {str(exc)}")
+
+    @app.post("/api/usp/multiview")
+    async def api_multiview() -> Dict[str, Any]:
+        """USP 2: Render 4-perspective orthographic projections (Front, Side, Back, Top)."""
+        try:
+            mesh = _get_active_mesh()
+            if mesh is None:
+                raise HTTPException(status_code=404, detail="No active 3D model available for multiview projections.")
+
+            composite_img = generate_multiview_projections(mesh, tile_size=256)
+            return {
+                "status": "success",
+                "multiview_url": _pil_to_data_url(composite_img),
+                "camera_presets": CAMERA_PRESETS,
+            }
+        except Exception as exc:
+            logger.exception(f"Multiview generation failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Multiview error: {str(exc)}")
+
+    @app.get("/api/usp/components")
+    async def api_get_components() -> Dict[str, Any]:
+        """USP 3: List component zones and material palettes for component editing."""
+        return {
+            "status": "success",
+            "components": ComponentEditor.get_components(),
+            "materials": ComponentEditor.get_materials(),
+            "material_palettes": {k: f"#{v[0]:02x}{v[1]:02x}{v[2]:02x}" for k, v in MATERIAL_PALETTES.items()},
+        }
+
+    @app.post("/api/usp/component-edit")
+    async def api_component_edit(payload: ComponentEditRequest) -> Dict[str, Any]:
+        """USP 3: Apply component-level material and recoloring to 3D geometry."""
+        global _LAST_GENERATED_RESULT
+        try:
+            mesh = _get_active_mesh()
+            if mesh is None:
+                raise HTTPException(status_code=404, detail="No active 3D model available to edit.")
+
+            updated_mesh = ComponentEditor.apply_edit(
+                mesh=mesh,
+                component_name=payload.component,
+                material_name=payload.material,
+                custom_color=payload.custom_color,
+            )
+
+            # Update cached result
+            if _LAST_GENERATED_RESULT is not None:
+                _LAST_GENERATED_RESULT.mesh = updated_mesh
+
+            # Export updated mesh as GLB for immediate viewer reload
+            edit_filename = f"edited_mesh_{int(time.time())}.glb"
+            edit_path = outputs_dir / edit_filename
+            export_mesh(updated_mesh, edit_path, export_format="glb")
+
+            return {
+                "status": "success",
+                "glb_url": f"/outputs/{edit_filename}",
+                "component": payload.component,
+                "material": payload.material,
+                "vertices": len(updated_mesh.vertices),
+                "faces": len(updated_mesh.faces),
+            }
+        except Exception as exc:
+            logger.exception(f"Component edit failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Component edit error: {str(exc)}")
+
+    @app.post("/api/usp/variations")
+    async def api_design_variations(payload: VariationsRequest) -> Dict[str, Any]:
+        """USP 4: Generate stylized AI design variations."""
+        try:
+            variations = generate_design_variations(
+                sketch_input=payload.sketch,
+                user_prompt=payload.prompt,
+                selected_styles=payload.styles,
+            )
+
+            results = []
+            for style_key, var_img, blended_prompt in variations:
+                results.append({
+                    "style": style_key,
+                    "prompt": blended_prompt,
+                    "image_url": _pil_to_data_url(var_img),
+                })
+
+            return {
+                "status": "success",
+                "variations": results,
+                "available_styles": list(DESIGN_STYLE_PRESETS.keys()),
+            }
+        except Exception as exc:
+            logger.exception(f"Design variations failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Variations error: {str(exc)}")
 
     # ── Static File Mounts ───────────────────────────────────────────────────
 

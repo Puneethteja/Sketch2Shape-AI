@@ -48,7 +48,15 @@ def compute_sketch_fidelity(
     canvas_size: int = 512,
 ) -> FidelityReport:
     if isinstance(sketch_input, (str, Path)):
-        sketch_pil = Image.open(sketch_input).convert("RGB")
+        s_str = str(sketch_input)
+        if s_str.startswith("data:image"):
+            import base64
+            from io import BytesIO
+            header, encoded = s_str.split(",", 1)
+            data = base64.b64decode(encoded)
+            sketch_pil = Image.open(BytesIO(data)).convert("RGB")
+        else:
+            sketch_pil = Image.open(sketch_input).convert("RGB")
     elif isinstance(sketch_input, np.ndarray):
         if sketch_input.ndim == 2:
             sketch_pil = Image.fromarray(sketch_input).convert("RGB")

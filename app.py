@@ -18,6 +18,12 @@ if str(ROOT_DIR) not in sys.path:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="Sketch2Shape AI — Final SPA Web Application")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
@@ -26,9 +32,9 @@ def main() -> None:
 
     import uvicorn
     print("\n" + "=" * 70)
-    print(" 🚀 Sketch2Shape AI — Single Page Application (SPA)")
-    print(f" 🌐 Web Interface : http://{args.host}:{args.port}")
-    print(f" 📚 API Docs      : http://{args.host}:{args.port}/docs")
+    print(" Sketch2Shape AI - Single Page Application (SPA)")
+    print(f" Web Interface : http://{args.host}:{args.port}")
+    print(f" API Docs      : http://{args.host}:{args.port}/docs")
     print("=" * 70 + "\n")
     uvicorn.run("server:app", host=args.host, port=args.port, reload=args.reload)
 
