@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "description": "Sketch2Shape AI curated demo test cases and precomputed artifacts",
+  "samples": [
+    {
+      "id": "sample_01_vase",
+      "name": "Ceramic Vase",
+      "prompt": "smooth porcelain ceramic vase with curved neck and round body",
+      "seed": 101,
+      "sketch_path": "outputs/samples/sample_01_vase/input_sketch.png",
+      "lineart_path": "outputs/samples/sample_01_vase/preprocessed_lineart.png",
+      "glb_path": "outputs/samples/sample_01_vase/model.glb",
+      "obj_path": "outputs/samples/sample_01_vase/model.obj",
+      "metrics": {
+        "vertex_count": 898,
+        "face_count": 1792,
+        "is_watertight": true,
+        "volume": 0.3288,
+        "surface_area": 2.6866
+      }
+    },
+    {
+      "id": "sample_02_mug",
+      "name": "Coffee Mug",
+      "prompt": "modern minimalist ceramic coffee mug with solid handle",
+      "seed": 202,
+      "sketch_path": "outputs/samples/sample_02_mug/input_sketch.png",
+      "lineart_path": "outputs/samples/sample_02_mug/preprocessed_lineart.png",
+      "glb_path": "outputs/samples/sample_02_mug/model.glb",
+      "obj_path": "outputs/samples/sample_02_mug/model.obj",
+      "metrics": {
+        "vertex_count": 750,
+        "face_count": 1496,
+        "is_watertight": true,
+        "volume": 0.4047,
+        "surface_area": 2.9462
+      }
+    },
+    {
+      "id": "sample_03_chair",
+      "name": "Modern Chair",
+      "prompt": "minimalist geometric wooden chair with four legs and backrest",
+      "seed": 303,
+      "sketch_path": "outputs/samples/sample_03_chair/input_sketch.png",
+      "lineart_path": "outputs/samples/sample_03_chair/preprocessed_lineart.png",
+      "glb_path": "outputs/samples/sample_03_chair/model.glb",
+      "obj_path": "outputs/samples/sample_03_chair/model.obj",
+      "metrics": {
+        "vertex_count": 350,
+        "face_count": 696,
+        "is_watertight": true,
+        "volume": 0.376,
+        "surface_area": 2.8369
+      }
+    },
+    {
+      "id": "sample_04_bottle",
+      "name": "Water Bottle",
+      "prompt": "tall reusable steel water bottle with screw cap",
+      "seed": 404,
+      "sketch_path": "outputs/samples/sample_04_bottle/input_sketch.png",
+      "lineart_path": "outputs/samples/sample_04_bottle/preprocessed_lineart.png",
+      "glb_path": "outputs/samples/sample_04_bottle/model.glb",
+      "obj_path": "outputs/samples/sample_04_bottle/model.obj",
+      "metrics": {
+        "vertex_count": 752,
+        "face_count": 1500,
+        "is_watertight": true,
+        "volume": 0.2776,
+        "surface_area": 2.5101
+      }
+    },
+    {
+      "id": "sample_05_bowl",
+      "name": "Wooden Bowl",
+      "prompt": "deep hand-carved polished wooden salad bowl",
+      "seed": 505,
+      "sketch_path": "outputs/samples/sample_05_bowl/input_sketch.png",
+      "lineart_path": "outputs/samples/sample_05_bowl/preprocessed_lineart.png",
+      "glb_path": "outputs/samples/sample_05_bowl/model.glb",
+      "obj_path": "outputs/samples/sample_05_bowl/model.obj",
+      "metrics": {
+        "vertex_count": 1252,
+        "face_count": 2500,
+        "is_watertight": true,
+        "volume": 0.3449,
+        "surface_area": 2.562
+      }
+    }
+  ]
+}
