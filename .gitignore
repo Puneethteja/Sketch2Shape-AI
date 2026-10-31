@@ -30,9 +30,21 @@ build/
 *.pt
 *.ckpt
 *.bin
-checkpoints/
+*.onnx
+checkpoints/**/*.safetensors
+checkpoints/**/*.pth
+checkpoints/**/*.pt
+checkpoints/**/*.bin
+checkpoints/**/*.onnx
 weights/
 models/
+
+# Keep engine/checkpoints structure and documentation tracked
+!engine/checkpoints/
+!engine/checkpoints/**/
+!engine/checkpoints/**/*.md
+!engine/checkpoints/**/*.py
+!engine/checkpoints/**/.gitkeep
 
 # ── Hugging Face / diffusers cache ───────────
 .cache/

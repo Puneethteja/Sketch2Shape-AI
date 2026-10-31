@@ -9,14 +9,24 @@
 
 ```
 Sketch2Shape-AI/
-├── docs/                         # Technical documentation
-│   ├── technical_architecture.md # System dataflow, algorithmic specs, integration contracts
-│   └── living_log.md             # Chronological development milestone log
+├── check_gpu.py                  # GPU, VRAM & FP16 precision verification script (Mona)
+├── docs/                         # Technical documentation & engineering logs
+│   ├── technical_architecture.md # System dataflow, algorithmic specs, integration contracts (Laxmi)
+│   └── living_log.md             # Chronological development milestone log (Team)
 ├── engine/                       # Core ML & CV pipeline
 │   ├── __init__.py
-│   └── preprocessing.py          # Ingest, normalize, letterbox resize, bilateral filter, lineart
+│   ├── preprocessing.py          # Ingest, normalize, letterbox resize, bilateral filter, lineart (Puneeth)
+│   ├── test_pipeline.py          # Stable Diffusion + ControlNet FP16 pipeline smoke test (Mona)
+│   ├── checkpoints/              # Checkpoint architecture & model weights (Mona)
+│   │   ├── README.md             # Checkpoint & VRAM budget specification
+│   │   ├── download_checkpoints.py # Automated HF model downloader & verifier
+│   │   ├── stable_diffusion/     # Stable Diffusion v1.5 weights
+│   │   ├── controlnet/           # ControlNet adapters (scribble / canny)
+│   │   └── reconstruction_3d/    # 3D backbones (InstantMesh / Unique3D)
+│   └── README.md                 # Engine subsystem documentation
 ├── ui/                           # Front-end / drawing canvas interface
-│   └── app.py                    # Gradio dual-viewport UI skeleton (Laxmi)
+│   ├── app.py                    # Gradio dual-viewport UI skeleton (Laxmi)
+│   └── .gitkeep
 ├── outputs/                      # Generated images & 3-D assets
 │   └── .gitkeep
 ├── tests/                        # pytest test suite
@@ -115,6 +125,7 @@ All 49 unit and integration tests validate:
 | Role | Name |
 |---|---|
 | Lead Data & Infrastructure Engineer | Puneeth |
+| Lead Generative AI & 3D Reconstruction Engineer | Mona |
 | Lead Frontend, WebGL & Technical Documentation | Laxmi |
 
 ---
