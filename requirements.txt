@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Sketch2Shape AI  ·  requirements.txt
+#  TechZephyr 4.0 Hackathon · IIT Bhubaneswar
+#
+#  Install with:
+#    pip install -r requirements.txt
+#
+#  For CUDA-enabled PyTorch (CUDA 11.8), run first:
+#    pip install torch torchvision torchaudio \
+#        --index-url https://download.pytorch.org/whl/cu118
+#  For CUDA 12.1:
+#    pip install torch torchvision torchaudio \
+#        --index-url https://download.pytorch.org/whl/cu121
+#  For CPU-only:
+#    pip install torch torchvision torchaudio
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── PyTorch (version pins — actual wheel fetched via --index-url above) ──────
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+
+# ── Computer Vision & Image Processing ──────────────────────────────────────
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0,<2.0.0
+
+# ── Background Removal ───────────────────────────────────────────────────────
+rembg>=2.0.50
+
+# ── 3-D Geometry ─────────────────────────────────────────────────────────────
+trimesh>=4.0.0
+scipy>=1.11.0          # trimesh optional dependency
+
+# ── Generative / Diffusion Pipeline ─────────────────────────────────────────
+diffusers>=0.27.0
+transformers>=4.38.0
+accelerate>=0.28.0
+huggingface-hub>=0.22.0
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+tqdm>=4.66.0
+matplotlib>=3.8.0
