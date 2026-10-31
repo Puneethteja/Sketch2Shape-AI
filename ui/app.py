@@ -1,6 +1,5 @@
 """
 ui/app.py
-=========
 Sketch2Shape AI  ·  TechZephyr 4.0 Hackathon  ·  IIT Bhubaneswar
 Lead Engineer : Laxmi (Frontend, WebGL & Technical Documentation)
 
@@ -30,11 +29,7 @@ import logging
 import sys
 import tempfile
 from pathlib import Path
-<<<<<<< HEAD
-from typing import Any, Dict, Optional, Tuple
-=======
-from typing import Optional, Tuple, Union
->>>>>>> 2542941326ba4098c948ce9e0f89301eb7076c7d
+from typing import Any, Dict, Optional, Tuple, Union
 
 import gradio as gr
 import numpy as np
@@ -74,7 +69,6 @@ APP_VERSION = "0.2.0-phase2"
 # Supported sketch export formats
 SUPPORTED_EXPORT_FORMATS: Tuple[str, ...] = ("OBJ", "GLB", "STL", "PLY")
 
-<<<<<<< HEAD
 # Session state store for active pipeline assets
 _SESSION: Dict[str, Any] = {
     "current_mesh": None,
@@ -84,13 +78,11 @@ _SESSION: Dict[str, Any] = {
 
 # Placeholder colour for the WebGL viewport stub
 _WEBGL_STUB_COLOR = "#1a1a2e"
-=======
 # Supported raster sketch upload extensions
 SUPPORTED_UPLOAD_EXTENSIONS = [".png", ".jpg", ".jpeg"]
 
 # Placeholder colour for the WebGL viewport
 _WEBGL_STUB_COLOR = "#090d16"
->>>>>>> 2542941326ba4098c948ce9e0f89301eb7076c7d
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WebGL Viewport Stub & HTML Definition
@@ -927,8 +919,7 @@ def build_ui() -> gr.Blocks:
                     label="Preprocessed / Lineart Preview",
                     type="pil",
                     interactive=False,
-                    show_download_button=True,
-                    height=180,
+                                        height=180,
                 )
 
                 # Depth / normal map from AI engine (Mona)
@@ -936,8 +927,7 @@ def build_ui() -> gr.Blocks:
                     label="Depth / Normal Map  [AI Engine Output]",
                     type="pil",
                     interactive=False,
-                    show_download_button=True,
-                    height=180,
+                                        height=180,
                     visible=True,
                 )
 

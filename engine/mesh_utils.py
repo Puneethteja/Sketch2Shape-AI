@@ -266,8 +266,15 @@ def repair_mesh(mesh: Any, *, verbose: bool = False) -> Any:
     """
     if TRIMESH_AVAILABLE and isinstance(mesh, trimesh.Trimesh):
         # Step 1: Remove duplicate and degenerate faces
-        mesh.remove_duplicate_faces()
-        mesh.remove_degenerate_faces()
+        if hasattr(mesh, 'remove_duplicate_faces'):
+            mesh.remove_duplicate_faces()
+        elif hasattr(mesh, 'unique_faces'):
+            mesh.update_faces(mesh.unique_faces())
+
+        if hasattr(mesh, 'remove_degenerate_faces'):
+            mesh.remove_degenerate_faces()
+        elif hasattr(mesh, 'nondegenerate_faces'):
+            mesh.update_faces(mesh.nondegenerate_faces())
 
         # Step 2: Merge vertices within floating-point tolerance
         mesh.merge_vertices(merge_tex=True, merge_norm=True)
