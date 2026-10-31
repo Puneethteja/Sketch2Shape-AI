@@ -251,6 +251,8 @@ def create_app() -> FastAPI:
                 "is_watertight": res.is_watertight,
                 "latency": res.latency_seconds,
                 "material_used": res.material_used,
+                "used_real_model": getattr(res, "used_real_model", False),
+                "inference_mode": res.metrics.get("inference_mode", "unknown"),
                 "formats": ["STL", "OBJ", "GLB", "PLY"],
                 "metrics": res.metrics,
             }

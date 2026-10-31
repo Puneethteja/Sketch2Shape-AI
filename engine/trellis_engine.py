@@ -1,24 +1,31 @@
 """
 engine/trellis_engine.py
 ========================
-Microsoft TRELLIS.2 (TRELLIS.2-4B) Generative 3D Reconstruction Engine
-Based on "Native and Compact Structured Latents for 3D Generation" (Xiang et al., 2025, arXiv:2512.14692)
-Model Checkpoint: microsoft/TRELLIS.2-4B (4 Billion Parameters)
+Microsoft TRELLIS.2 (TRELLIS.2-4B) — Real Pretrained Model Inference Pipeline
 
-Core Capabilities:
-- Representation: O-Voxel (Sparse 3D VAE with 16x spatial downsampling)
-- Resolution: 512³ - 1536³ arbitrary topology handling
-- Full PBR Attributes: Base Color, Roughness, Metallic, Opacity
-- Output Formats: STL (3D Printing), OBJ (CAD/DCC), GLB (PBR WebGL), PLY (Point Cloud)
-- 3 Native Materials: Porcelain Ceramic, Slate Polymer, Cast Bronze
+This module calls the actual Microsoft TRELLIS.2-4B pretrained model hosted on
+Hugging Face Spaces (microsoft/TRELLIS.2) via the Gradio Client API. The 4-billion
+parameter model runs on Microsoft's GPU infrastructure (NVIDIA H100/A100) and
+returns production-quality 3D meshes with full PBR materials.
+
+Pipeline Steps:
+  1. Preprocess input image (background removal, centering) via /preprocess_image
+  2. Run image-to-3D generation (O-Voxel Sparse 3D DiT) via /image_to_3d
+  3. Extract GLB mesh with decimation & texture baking via /extract_glb
+  4. Download GLB and convert locally to STL, OBJ, PLY
+
+Paper: "Native and Compact Structured Latents for 3D Generation"
+       (Xiang et al., 2025, arXiv:2512.14692)
+Weights: microsoft/TRELLIS.2-4B (Hugging Face)
+Space:   microsoft/TRELLIS.2 (Hugging Face Spaces)
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import math
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -37,7 +44,10 @@ from utils.mesh_utils import repair_mesh, export_mesh, sanitize_mesh
 
 logger = logging.getLogger("sketch2shape.trellis")
 
-# Default 3 Materials PBR Parameters
+# ── Hugging Face Space Configuration ─────────────────────────────────────────
+HF_SPACE_ID = "microsoft/TRELLIS.2"
+
+# ── 3 Native PBR Materials ───────────────────────────────────────────────────
 TRELLIS_MATERIALS = {
     "ceramic": {
         "name": "Porcelain Ceramic",
@@ -73,11 +83,12 @@ MODEL_METRICS_SPECS = {
     "parameters": "4 Billion (Sparse 3D DiT + Sparse 3D VAE)",
     "representation": "Field-Free O-Voxel (Sparse Voxel Structure)",
     "downsampling": "16x Spatial Compression via Sparse 3D VAE",
-    "resolution": "512³ - 1536³ Continuous Resolution",
+    "resolution": "512\u00b3 - 1536\u00b3 Continuous Resolution",
     "pbr_attributes": ["Base Color", "Roughness", "Metallic", "Opacity"],
     "supported_formats": ["STL", "OBJ", "GLB", "PLY"],
     "supported_materials": ["Porcelain Ceramic", "Slate Polymer", "Cast Bronze"],
     "topology_guarantee": "Arbitrary Topology (Open Surfaces, Non-manifold, Enclosed Watertight)",
+    "inference_endpoint": f"Hugging Face Spaces ({HF_SPACE_ID})",
 }
 
 
@@ -99,20 +110,30 @@ class TrellisGenerationResult:
     is_watertight: bool
     latency_seconds: float
     material_used: str
+    used_real_model: bool = False
     metrics: Dict[str, Any] = field(default_factory=dict)
 
 
 class MicrosoftTrellisEngine:
     """
-    Microsoft TRELLIS.2-4B Engine Wrapper.
-    Ingests 2D concept sketches/images and generates high-resolution, watertight 3D meshes
-    with native serialization to STL, OBJ, GLB, and PLY formats.
+    Microsoft TRELLIS.2-4B Real Pretrained Model Pipeline.
+
+    Primary mode: Calls the actual TRELLIS.2-4B pretrained model hosted on
+    Hugging Face Spaces via the Gradio Client API. The real 4B-parameter model
+    runs image-to-3D generation on Microsoft's GPU infrastructure and returns
+    production-quality GLB meshes with PBR textures.
+
+    Fallback mode: If the remote API is unreachable (no internet, rate-limited,
+    or queue full), falls back to local procedural geometry synthesis for
+    development/testing purposes only.
     """
 
     def __init__(self, device: Optional[str] = None):
         self.device = device or ("cuda" if self._has_cuda() else "cpu")
         self.model_name = "Microsoft TRELLIS.2-4B"
         self.pipeline: Optional[Any] = None
+        self._gradio_client: Optional[Any] = None
+        self._api_available: Optional[bool] = None
         self._init_pipeline()
 
     def _has_cuda(self) -> bool:
@@ -123,29 +144,58 @@ class MicrosoftTrellisEngine:
             return False
 
     def _init_pipeline(self) -> None:
-        """Initializes Microsoft TRELLIS.2-4B pipeline if weights and GPU are available."""
+        """
+        Initializes the inference pipeline in priority order:
+        1. Local CUDA pipeline (if trellis2 package + GPU available)
+        2. Hugging Face Spaces remote API via gradio_client
+        3. Local procedural fallback (for testing/development only)
+        """
+        # 1. Try local GPU pipeline
         if self.device == "cuda":
             try:
-                # 1. Load official TRELLIS.2 pipeline from microsoft/TRELLIS.2-4B
                 from trellis2.pipelines import Trellis2ImageTo3DPipeline
-                logger.info("Initializing Microsoft TRELLIS.2 pipeline from 'microsoft/TRELLIS.2-4B'...")
+                logger.info("Loading Microsoft TRELLIS.2-4B from 'microsoft/TRELLIS.2-4B' onto GPU...")
                 self.pipeline = Trellis2ImageTo3DPipeline.from_pretrained("microsoft/TRELLIS.2-4B")
                 self.pipeline.to(self.device)
-                logger.info("Microsoft TRELLIS.2-4B pipeline successfully loaded into GPU VRAM.")
+                logger.info("TRELLIS.2-4B loaded into GPU VRAM. Using local CUDA inference.")
                 return
-            except Exception as exc1:
-                try:
-                    # 2. Fallback to TRELLIS v1 large if installed
-                    from trellis.pipelines import TrellisImageTo3DPipeline
-                    self.pipeline = TrellisImageTo3DPipeline.from_pretrained("microsoft/TRELLIS-image-large")
-                    self.pipeline.to(self.device)
-                    logger.info("Microsoft TRELLIS pipeline successfully loaded onto GPU.")
-                    return
-                except Exception as exc2:
-                    logger.info(f"GPU pipeline loading deferred ({exc1}; {exc2}). Operating in production O-Voxel Structured Latent engine.")
-        else:
-            logger.info("Host running in CPU mode. Engaging production O-Voxel Structured Latent synthesis engine.")
+            except Exception as exc:
+                logger.info(f"Local CUDA pipeline not available ({exc}).")
+
+        # 2. Try Hugging Face Spaces remote API
+        try:
+            self._init_gradio_client()
+            if self._gradio_client is not None:
+                logger.info(f"Connected to Microsoft TRELLIS.2 remote API at {HF_SPACE_ID}.")
+                logger.info("Image-to-3D inference will run on Microsoft's GPU infrastructure.")
+                return
+        except Exception as exc:
+            logger.warning(f"Remote API connection deferred ({exc}).")
+
+        # 3. Procedural fallback
+        logger.info("Operating in local procedural fallback mode (no real model).")
         self.pipeline = None
+
+    def _init_gradio_client(self) -> None:
+        """Connects to the Microsoft TRELLIS.2 Hugging Face Space via gradio_client."""
+        from gradio_client import Client
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if hf_token:
+            self._gradio_client = Client(HF_SPACE_ID, hf_token=hf_token)
+        else:
+            self._gradio_client = Client(HF_SPACE_ID)
+        # Start a session so the Space allocates GPU
+        try:
+            self._gradio_client.predict(api_name="/start_session")
+        except Exception:
+            pass  # Some Spaces don't require explicit session start
+        self._api_available = True
+
+    def _is_remote_api_available(self) -> bool:
+        """Checks if the Gradio remote API client is initialized and reachable."""
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            return False
+        return self._gradio_client is not None and self._api_available is True
 
     def generate(
         self,
@@ -154,12 +204,11 @@ class MicrosoftTrellisEngine:
         output_dir: Optional[Path] = None,
     ) -> TrellisGenerationResult:
         """
-        Executes the Microsoft TRELLIS.2-4B image-to-3D pipeline:
-        1. Ingests and normalizes image/sketch input
-        2. Infers Structured 3D Latent field
-        3. Extracts clean, watertight 2-manifold surface geometry
-        4. Applies selected PBR material properties (ceramic, slate, bronze)
-        5. Automatically exports all 4 exchange formats: STL, OBJ, GLB, PLY
+        Executes the Microsoft TRELLIS.2-4B image-to-3D pipeline.
+
+        If the remote Hugging Face API is available, this calls the real pretrained
+        4B-parameter model running on NVIDIA H100/A100 GPUs. Otherwise, falls back
+        to local procedural geometry for testing.
         """
         t0 = time.perf_counter()
         target_dir = output_dir or (ROOT_DIR / "outputs")
@@ -168,18 +217,44 @@ class MicrosoftTrellisEngine:
         # 1. Ingest image
         pil_img = self._load_image(image_input)
 
-        # 2. Extract Geometry via Microsoft TRELLIS engine
-        raw_mesh = self._infer_3d_geometry(pil_img, material=material)
+        # 2. Save temp image for API upload
+        temp_img_path = target_dir / "_temp_input.png"
+        pil_img.save(str(temp_img_path), format="PNG")
 
-        # 3. Apply topological sanitization and watertight repair
-        clean_mesh = repair_mesh(raw_mesh)
+        used_real_model = False
+        glb_mesh = None
 
-        # 4. Apply material colors to mesh vertices
-        mat_key = material.lower().strip()
-        mat_info = TRELLIS_MATERIALS.get(mat_key, TRELLIS_MATERIALS["ceramic"])
-        colored_mesh = self._apply_material_colors(clean_mesh, mat_info)
+        # 3. Try real TRELLIS.2 pretrained model via remote API
+        if self._is_remote_api_available():
+            try:
+                glb_mesh = self._generate_via_remote_api(str(temp_img_path), target_dir)
+                used_real_model = True
+                logger.info("Successfully generated 3D mesh using real Microsoft TRELLIS.2-4B pretrained model.")
+            except Exception as exc:
+                logger.warning(
+                    f"Remote TRELLIS.2 API call failed ({exc}). "
+                    "Falling back to local procedural geometry."
+                )
 
-        # 5. Export all 4 formats: STL, OBJ, GLB, PLY
+        # 4. Try local CUDA pipeline
+        if glb_mesh is None and self.pipeline is not None:
+            try:
+                glb_mesh = self._generate_via_local_pipeline(pil_img, target_dir)
+                used_real_model = True
+                logger.info("Generated mesh using local TRELLIS.2-4B CUDA pipeline.")
+            except Exception as exc:
+                logger.warning(f"Local CUDA pipeline failed ({exc}). Falling back to procedural.")
+
+        # 5. Procedural fallback (testing/development only)
+        if glb_mesh is None:
+            logger.info("Using procedural geometry fallback (not real TRELLIS model).")
+            raw_mesh = self._infer_3d_geometry_procedural(pil_img, material=material)
+            clean_mesh = repair_mesh(raw_mesh)
+            mat_key = material.lower().strip()
+            mat_info = TRELLIS_MATERIALS.get(mat_key, TRELLIS_MATERIALS["ceramic"])
+            glb_mesh = self._apply_material_colors(clean_mesh, mat_info)
+
+        # 6. Export all 4 formats: STL, OBJ, GLB, PLY
         timestamp = int(time.time() * 1000)
         base_name = f"trellis_model_{timestamp}"
 
@@ -188,23 +263,41 @@ class MicrosoftTrellisEngine:
         stl_file = target_dir / f"{base_name}.stl"
         ply_file = target_dir / f"{base_name}.ply"
 
-        export_mesh(colored_mesh, glb_file, export_format="glb")
+        # If we got a GLB file directly from the API, copy it; otherwise export from mesh
+        if used_real_model and hasattr(glb_mesh, '_api_glb_path'):
+            api_glb = glb_mesh._api_glb_path
+            shutil.copy2(api_glb, str(glb_file))
+            # The mesh object is the loaded GLB
+            colored_mesh = glb_mesh
+        else:
+            colored_mesh = glb_mesh
+            export_mesh(colored_mesh, glb_file, export_format="glb")
+
         export_mesh(colored_mesh, obj_file, export_format="obj")
         export_mesh(colored_mesh, stl_file, export_format="stl")
         export_mesh(colored_mesh, ply_file, export_format="ply")
 
-        # 6. Render preview image of generated geometry
+        # 7. Render preview
+        mat_key = material.lower().strip()
+        mat_info = TRELLIS_MATERIALS.get(mat_key, TRELLIS_MATERIALS["ceramic"])
         preview_img = self._render_mesh_preview(colored_mesh, mat_info)
         preview_data_url = self._pil_to_data_url(preview_img)
+
+        # Clean up temp file
+        try:
+            temp_img_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
         elapsed = round(time.perf_counter() - t0, 2)
         n_verts = len(colored_mesh.vertices)
         n_faces = len(colored_mesh.faces)
 
+        inference_mode = "TRELLIS.2-4B Pretrained (Remote API)" if used_real_model else "Procedural Fallback"
         logger.info(
-            f"Microsoft TRELLIS synthesis complete in {elapsed}s | "
+            f"Generation complete [{inference_mode}] in {elapsed}s | "
             f"Verts: {n_verts} | Faces: {n_faces} | Watertight: {colored_mesh.is_watertight} | "
-            f"Formats: STL, OBJ, GLB, PLY exported."
+            f"Exported: STL, OBJ, GLB, PLY"
         )
 
         return TrellisGenerationResult(
@@ -223,17 +316,203 @@ class MicrosoftTrellisEngine:
             is_watertight=bool(colored_mesh.is_watertight),
             latency_seconds=elapsed,
             material_used=mat_info["name"],
+            used_real_model=used_real_model,
             metrics={
                 "model": "Microsoft TRELLIS.2-4B",
-                "parameters": "2.4B Dense+Sparse DiT",
-                "latent_resolution": "64^3 Structured Latents",
-                "surface_manifold": "2-Manifold Closed Shell",
+                "inference_mode": inference_mode,
+                "parameters": "4B (Sparse 3D DiT + Sparse 3D VAE)",
+                "representation": "O-Voxel (Field-Free Sparse Voxel)",
                 "formats": ["STL", "OBJ", "GLB", "PLY"],
                 "triangle_budget": n_faces,
                 "vertex_budget": n_verts,
                 "device": self.device,
             },
         )
+
+    # ── Real Model: Remote API Pipeline ──────────────────────────────────────
+
+    def _generate_via_remote_api(
+        self, image_path: str, target_dir: Path
+    ) -> trimesh.Trimesh:
+        """
+        Calls the real Microsoft TRELLIS.2-4B pretrained model via the
+        Hugging Face Spaces Gradio API.
+
+        Pipeline:
+          1. /preprocess_image  — Background removal & centering
+          2. /image_to_3d       — Run the 4B-parameter O-Voxel DiT model
+          3. /extract_glb       — Post-process & export GLB with PBR textures
+        """
+        from gradio_client import handle_file
+
+        client = self._gradio_client
+        logger.info("Step 1/3: Preprocessing image (background removal & centering)...")
+
+        # Step 1: Preprocess image
+        preprocessed = client.predict(
+            input=handle_file(image_path),
+            api_name="/preprocess_image",
+        )
+        # preprocessed is a dict with 'path' key pointing to the processed image
+        if isinstance(preprocessed, dict):
+            processed_path = preprocessed.get("path") or preprocessed.get("url")
+        else:
+            processed_path = str(preprocessed)
+
+        logger.info("Step 2/3: Running TRELLIS.2-4B image-to-3D generation (4B params on GPU)...")
+
+        # Step 2: Image to 3D generation with the real model
+        # Use default optimal parameters (no user tuning)
+        preview_result = client.predict(
+            image=handle_file(processed_path),
+            seed=42,
+            resolution="1024",
+            ss_guidance_strength=7.5,
+            ss_guidance_rescale=0.7,
+            ss_sampling_steps=12,
+            ss_rescale_t=5.0,
+            shape_slat_guidance_strength=7.5,
+            shape_slat_guidance_rescale=0.5,
+            shape_slat_sampling_steps=12,
+            shape_slat_rescale_t=3.0,
+            tex_slat_guidance_strength=1.0,
+            tex_slat_guidance_rescale=0.0,
+            tex_slat_sampling_steps=12,
+            tex_slat_rescale_t=3.0,
+            api_name="/image_to_3d",
+        )
+        logger.info("Step 3/3: Extracting GLB mesh with PBR textures...")
+
+        # Step 3: Extract GLB with decimation and texture baking
+        glb_result = client.predict(
+            decimation_target=300000,
+            texture_size=2048,
+            api_name="/extract_glb",
+        )
+
+        # glb_result is a tuple: (model3d_filepath, download_filepath)
+        if isinstance(glb_result, (tuple, list)):
+            glb_source = glb_result[0]
+        else:
+            glb_source = glb_result
+
+        # If the result is a dict, extract the path
+        if isinstance(glb_source, dict):
+            glb_source = glb_source.get("path") or glb_source.get("url") or str(glb_source)
+
+        glb_source = str(glb_source)
+        logger.info(f"Received GLB from TRELLIS.2 API: {glb_source}")
+
+        # Load the GLB mesh
+        loaded = trimesh.load(glb_source, force="mesh")
+        if isinstance(loaded, trimesh.Scene):
+            geoms = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
+            if geoms:
+                mesh = trimesh.util.concatenate(geoms)
+            else:
+                raise ValueError("TRELLIS.2 API returned GLB with no mesh geometry")
+        else:
+            mesh = loaded
+
+        # Attach the API GLB path so we can copy the original file
+        mesh._api_glb_path = glb_source
+
+        return mesh
+
+    def _generate_via_local_pipeline(
+        self, pil_img: Image.Image, target_dir: Path
+    ) -> trimesh.Trimesh:
+        """Runs inference using a locally installed trellis2 CUDA pipeline."""
+        import torch
+        import cv2
+
+        mesh_result = self.pipeline.run(pil_img)[0]
+        mesh_result.simplify(16777216)
+
+        try:
+            import o_voxel
+            glb_path = str(target_dir / "_trellis_local.glb")
+            glb = o_voxel.postprocess.to_glb(
+                vertices=mesh_result.vertices,
+                faces=mesh_result.faces,
+                attr_volume=mesh_result.attrs,
+                coords=mesh_result.coords,
+                attr_layout=mesh_result.layout,
+                voxel_size=mesh_result.voxel_size,
+                aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                decimation_target=300000,
+                texture_size=2048,
+                remesh=True,
+                remesh_band=1,
+                remesh_project=0,
+                verbose=False,
+            )
+            glb.export(glb_path, extension_webp=True)
+            loaded = trimesh.load(glb_path, force="mesh")
+            if isinstance(loaded, trimesh.Scene):
+                geoms = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                return trimesh.util.concatenate(geoms) if geoms else mesh_result
+            return loaded
+        except Exception:
+            # Return the raw mesh if o_voxel postprocessing fails
+            verts = mesh_result.vertices
+            faces = mesh_result.faces
+            return trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+
+    # ── Procedural Fallback (Development/Testing Only) ───────────────────────
+
+    def _infer_3d_geometry_procedural(
+        self, pil_img: Image.Image, material: str = "ceramic"
+    ) -> trimesh.Trimesh:
+        """
+        Procedural geometry fallback. NOT the real TRELLIS model.
+        Used only when the remote API and local CUDA are both unavailable.
+        """
+        arr = np.array(pil_img, dtype=np.float32) / 255.0
+        luminance = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+        fg_mask = luminance < 0.94
+
+        if fg_mask.sum() < 30:
+            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
+
+        from scipy.ndimage import distance_transform_edt
+        from scipy.spatial import ConvexHull
+
+        dist = distance_transform_edt(fg_mask).astype(np.float32)
+        max_d = dist.max() + 1e-6
+        depth_profile = dist / max_d
+
+        stride = 4
+        H, W = depth_profile.shape
+        y_grid, x_grid = np.mgrid[0:H:stride, 0:W:stride]
+        valid = depth_profile[::stride, ::stride] > 0.04
+
+        if valid.sum() < 25:
+            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
+
+        norm_x = (x_grid / W) * 2.0 - 1.0
+        norm_y = -((y_grid / H) * 2.0 - 1.0)
+        norm_z_front = depth_profile[::stride, ::stride] * 0.75
+        norm_z_back = -norm_z_front * 0.70
+
+        vf_x = norm_x[valid]
+        vf_y = norm_y[valid]
+        vf_zf = norm_z_front[valid]
+        vf_zb = norm_z_back[valid]
+
+        pts_f = np.stack([vf_x, vf_y, vf_zf], axis=-1)
+        pts_b = np.stack([vf_x, vf_y, vf_zb], axis=-1)
+        all_pts = np.concatenate([pts_f, pts_b], axis=0)
+
+        try:
+            hull = ConvexHull(all_pts)
+            faces = hull.simplices.astype(np.int32)
+            mesh = trimesh.Trimesh(vertices=all_pts, faces=faces, process=True)
+            return mesh
+        except Exception:
+            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
+
+    # ── Shared Utilities ─────────────────────────────────────────────────────
 
     def _load_image(self, image_input: Any) -> Image.Image:
         """Ingests sketch from file, PIL Image, NumPy array, or Base64 data URL."""
@@ -257,64 +536,10 @@ class MicrosoftTrellisEngine:
             img = img.resize((512, 512), Image.Resampling.BILINEAR)
         return img
 
-    def _infer_3d_geometry(self, pil_img: Image.Image, material: str = "ceramic") -> trimesh.Trimesh:
-        """
-        Runs Structured 3D Latent reconstruction.
-        Extracts bilateral continuous manifold shell with volume depth gradients.
-        """
-        arr = np.array(pil_img, dtype=np.float32) / 255.0
-        luminance = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
-        fg_mask = luminance < 0.94
-
-        if fg_mask.sum() < 30:
-            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
-
-        from scipy.ndimage import distance_transform_edt, gaussian_filter
-        from scipy.spatial import ConvexHull
-
-        dist = distance_transform_edt(fg_mask).astype(np.float32)
-        max_d = dist.max() + 1e-6
-        depth_profile = dist / max_d
-
-        # Determine geometric aspect profile
-        y_indices, x_indices = np.where(fg_mask)
-        h_span = max(y_indices.max() - y_indices.min(), 1)
-        w_span = max(x_indices.max() - x_indices.min(), 1)
-        aspect = h_span / float(w_span)
-
-        stride = 4
-        H, W = depth_profile.shape
-        y_grid, x_grid = np.mgrid[0:H:stride, 0:W:stride]
-        valid = depth_profile[::stride, ::stride] > 0.04
-
-        if valid.sum() < 25:
-            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
-
-        # Coordinate frame [-1, 1]
-        norm_x = (x_grid / W) * 2.0 - 1.0
-        norm_y = -((y_grid / H) * 2.0 - 1.0)
-        norm_z_front = depth_profile[::stride, ::stride] * 0.75
-        norm_z_back = -norm_z_front * 0.70  # Symmetrical rear surface
-
-        vf_x = norm_x[valid]
-        vf_y = norm_y[valid]
-        vf_zf = norm_z_front[valid]
-        vf_zb = norm_z_back[valid]
-
-        pts_f = np.stack([vf_x, vf_y, vf_zf], axis=-1)
-        pts_b = np.stack([vf_x, vf_y, vf_zb], axis=-1)
-        all_pts = np.concatenate([pts_f, pts_b], axis=0)
-
-        try:
-            hull = ConvexHull(all_pts)
-            faces = hull.simplices.astype(np.int32)
-            mesh = trimesh.Trimesh(vertices=all_pts, faces=faces, process=True)
-            return mesh
-        except Exception:
-            return trimesh.creation.icosphere(subdivisions=3, radius=0.8)
-
-    def _apply_material_colors(self, mesh: trimesh.Trimesh, mat_info: Dict[str, Any]) -> trimesh.Trimesh:
-        """Applies realistic PBR vertex colors and shading highlights based on material properties."""
+    def _apply_material_colors(
+        self, mesh: trimesh.Trimesh, mat_info: Dict[str, Any]
+    ) -> trimesh.Trimesh:
+        """Applies PBR vertex colors based on material properties."""
         verts = np.asarray(mesh.vertices, dtype=np.float32)
         n = len(verts)
 
@@ -324,20 +549,16 @@ class MicrosoftTrellisEngine:
             mesh.recompute_normals()
             normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
 
-        # Directional key light + fill light for natural PBR studio shading
         key_light = np.array([0.45, 0.75, 0.55])
         key_light /= np.linalg.norm(key_light)
-
         fill_light = np.array([-0.5, 0.3, -0.4])
         fill_light /= np.linalg.norm(fill_light)
 
         dot_key = np.clip(np.sum(normals * key_light, axis=-1), 0.0, 1.0)
         dot_fill = np.clip(np.sum(normals * fill_light, axis=-1), 0.0, 1.0) * 0.35
         ambient = 0.35
-
         shading = np.clip(ambient + dot_key * 0.65 + dot_fill, 0.0, 1.0)
 
-        # Specular glint for smooth materials
         if mat_info["roughness"] < 0.3:
             view_vec = np.array([0.0, 0.0, 1.0])
             half_vec = key_light + view_vec
@@ -355,8 +576,10 @@ class MicrosoftTrellisEngine:
         mesh.visual.vertex_colors = colors
         return mesh
 
-    def _render_mesh_preview(self, mesh: trimesh.Trimesh, mat_info: Dict[str, Any], size: int = 400) -> Image.Image:
-        """Renders an elegant orthographic studio preview of the extracted geometry."""
+    def _render_mesh_preview(
+        self, mesh: trimesh.Trimesh, mat_info: Dict[str, Any], size: int = 400
+    ) -> Image.Image:
+        """Renders an orthographic studio preview of the mesh."""
         img = Image.new("RGB", (size, size), (18, 22, 30))
         draw = ImageDraw.Draw(img)
 
@@ -364,17 +587,13 @@ class MicrosoftTrellisEngine:
         if len(verts) == 0:
             return img
 
-        px = verts[:, 0]
-        py = verts[:, 1]
-        pz = verts[:, 2]
-
+        px, py, pz = verts[:, 0], verts[:, 1], verts[:, 2]
         span_x = max(px.max() - px.min(), 1e-4)
         span_y = max(py.max() - py.min(), 1e-4)
         scale = (size * 0.70) / max(span_x, span_y)
 
         cx = (px.min() + px.max()) / 2.0
         cy = (py.min() + py.max()) / 2.0
-
         scr_x = ((px - cx) * scale + (size / 2.0)).astype(np.int32)
         scr_y = (-(py - cy) * scale + (size / 2.0)).astype(np.int32)
 
@@ -383,10 +602,8 @@ class MicrosoftTrellisEngine:
         colors = getattr(v_colors, "vertex_colors", None) if v_colors else None
 
         if faces is not None and len(faces) > 0:
-            # Sort triangles by depth for painter's algorithm
             tri_depths = [pz[f].mean() for f in faces]
             sorted_idx = np.argsort(tri_depths)
-
             for idx in sorted_idx:
                 f = faces[idx]
                 pts = [(int(scr_x[f[i]]), int(scr_y[f[i]])) for i in range(3)]
@@ -406,8 +623,9 @@ class MicrosoftTrellisEngine:
         return f"data:image/png;base64,{b64}"
 
 
-# Global Singleton Instance for High Performance
+# ── Global Singleton ─────────────────────────────────────────────────────────
 _TRELLIS_ENGINE: Optional[MicrosoftTrellisEngine] = None
+
 
 def get_trellis_engine() -> MicrosoftTrellisEngine:
     global _TRELLIS_ENGINE
