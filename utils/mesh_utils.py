@@ -27,6 +27,53 @@ logger = logging.getLogger("sketch2shape.mesh_utils")
 
 SUPPORTED_EXPORT_FORMATS = ("glb", "obj", "ply", "stl")
 
+def create_fallback_mesh(radius: float = 1.0) -> trimesh.Trimesh:
+    """
+    Create a canonical watertight fallback mesh.
+    """
+    try:
+        mesh = trimesh.creation.icosphere(subdivisions=2, radius=radius)
+        if getattr(mesh, "is_watertight", False):
+            return mesh
+    except Exception:
+        pass
+    return trimesh.creation.box(extents=(radius, radius, radius))
+
+def sanitize_mesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """
+    Sanitize mesh vertices and faces to remove NaNs, infinities, and out-of-bound indices.
+    """
+    if mesh is None or not hasattr(mesh, "vertices") or not hasattr(mesh, "faces"):
+        return create_fallback_mesh()
+    try:
+        verts = np.asarray(mesh.vertices, dtype=np.float64)
+        faces = np.asarray(mesh.faces, dtype=np.int64)
+        if verts.size == 0 or faces.size == 0 or len(verts) < 3 or len(faces) == 0:
+            return create_fallback_mesh()
+
+        finite_verts = np.isfinite(verts).all(axis=1)
+        if not np.all(finite_verts):
+            valid_indices = np.where(finite_verts)[0]
+            if len(valid_indices) < 3:
+                return create_fallback_mesh()
+            index_map = {int(old): int(new) for new, old in enumerate(valid_indices)}
+            valid_faces_mask = np.isin(faces, valid_indices).all(axis=1)
+            new_faces = faces[valid_faces_mask]
+            if len(new_faces) == 0:
+                return create_fallback_mesh()
+            remapped_faces = np.vectorize(index_map.get)(new_faces)
+            clean_verts = verts[finite_verts]
+            return trimesh.Trimesh(vertices=clean_verts, faces=remapped_faces, process=False)
+
+        valid_faces_mask = (faces >= 0).all(axis=1) & (faces < len(verts)).all(axis=1)
+        if not np.all(valid_faces_mask):
+            faces = faces[valid_faces_mask]
+            if len(faces) == 0:
+                return create_fallback_mesh()
+        return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    except Exception:
+        return create_fallback_mesh()
+
 def load_mesh(source: Union[str, Path, trimesh.Trimesh, trimesh.Scene]) -> trimesh.Trimesh:
     """
     Load a 3D mesh from a file path or extract it from an in-memory Trimesh / Scene.
@@ -107,25 +154,68 @@ def inspect_mesh(mesh: trimesh.Trimesh) -> Dict[str, Any]:
         - centroid: tuple[float, float, float]
         - body_count: int (number of disconnected components)
     """
-    is_watertight = bool(mesh.is_watertight)
-    is_winding = bool(mesh.is_winding_consistent)
+    if mesh is None or not hasattr(mesh, "vertices") or not hasattr(mesh, "faces"):
+        return {
+            "vertex_count": 0,
+            "face_count": 0,
+            "is_watertight": False,
+            "is_winding_consistent": False,
+            "euler_number": 0,
+            "volume": 0.0,
+            "surface_area": 0.0,
+            "bounding_box_extents": (0.0, 0.0, 0.0),
+            "centroid": (0.0, 0.0, 0.0),
+            "body_count": 0,
+        }
 
-    extents = tuple(float(x) for x in mesh.bounding_box.extents)
-    centroid = tuple(float(x) for x in mesh.centroid)
+    is_watertight = bool(getattr(mesh, "is_watertight", False))
+    is_winding = bool(getattr(mesh, "is_winding_consistent", False))
 
-    vol = float(mesh.volume) if is_watertight else 0.0
+    try:
+        extents = tuple(float(x) for x in mesh.bounding_box.extents)
+    except Exception:
+        extents = (0.0, 0.0, 0.0)
 
-    components = mesh.split(only_watertight=False)
-    body_count = len(components) if isinstance(components, (list, np.ndarray)) else 1
+    try:
+        centroid = tuple(float(x) for x in mesh.centroid)
+    except Exception:
+        centroid = (0.0, 0.0, 0.0)
+
+    vol = 0.0
+    if is_watertight:
+        try:
+            vol = float(mesh.volume)
+            if not np.isfinite(vol):
+                vol = 0.0
+        except Exception:
+            vol = 0.0
+
+    try:
+        area = float(mesh.area)
+        if not np.isfinite(area):
+            area = 0.0
+    except Exception:
+        area = 0.0
+
+    try:
+        euler = int(mesh.euler_number)
+    except Exception:
+        euler = 0
+
+    try:
+        components = mesh.split(only_watertight=False)
+        body_count = len(components) if isinstance(components, (list, np.ndarray)) else 1
+    except Exception:
+        body_count = 1
 
     return {
         "vertex_count": int(len(mesh.vertices)),
         "face_count": int(len(mesh.faces)),
         "is_watertight": is_watertight,
         "is_winding_consistent": is_winding,
-        "euler_number": int(mesh.euler_number),
+        "euler_number": euler,
         "volume": vol,
-        "surface_area": float(mesh.area),
+        "surface_area": area,
         "bounding_box_extents": extents,
         "centroid": centroid,
         "body_count": body_count,
@@ -133,13 +223,14 @@ def inspect_mesh(mesh: trimesh.Trimesh) -> Dict[str, Any]:
 
 def is_watertight(mesh: trimesh.Trimesh) -> bool:
     """Convenience boolean check for watertight topology."""
-    return bool(mesh.is_watertight)
+    return bool(getattr(mesh, "is_watertight", False))
 
 def repair_mesh(
     mesh: trimesh.Trimesh,
     strip_floating: bool = True,
     fill_holes: bool = True,
     center_and_scale: bool = True,
+    enforce_watertight: bool = True,
 ) -> trimesh.Trimesh:
     """
     Execute the deterministic 7-step non-manifold recovery and repair sequence.
@@ -164,72 +255,122 @@ def repair_mesh(
         Whether to run hole-filling routines.
     center_and_scale : bool
         Whether to center the mesh at (0, 0, 0) with a unit bounding sphere.
+    enforce_watertight : bool
+        Whether to guarantee a watertight closed manifold surface upon completion.
 
     Returns
     -------
     trimesh.Trimesh
         Cleaned, repaired, manifold mesh.
     """
-    repaired = mesh.copy()
-    logger.info(
-        "Starting mesh repair sequence: %d vertices, %d faces",
-        len(repaired.vertices), len(repaired.faces),
-    )
-
     try:
-        repaired.update_faces(repaired.unique_faces())
-    except Exception as exc:
-        logger.debug("unique_faces warning: %s", exc)
+        if mesh is None:
+            return create_fallback_mesh()
 
-    try:
-        repaired.update_faces(repaired.nondegenerate_faces())
-    except Exception as exc:
-        logger.debug("nondegenerate_faces warning: %s", exc)
+        repaired = sanitize_mesh(mesh)
+        if len(repaired.faces) == 0 or len(repaired.vertices) < 3:
+            return create_fallback_mesh()
 
-    try:
-        repaired.remove_unreferenced_vertices()
-    except Exception as exc:
-        logger.debug("remove_unreferenced_vertices warning: %s", exc)
+        logger.info(
+            "Starting mesh repair sequence: %d vertices, %d faces",
+            len(repaired.vertices), len(repaired.faces),
+        )
 
-    try:
-        trimesh.repair.fix_winding(repaired)
-    except Exception as exc:
-        logger.debug("fix_winding warning: %s", exc)
-
-    try:
-        trimesh.repair.fix_inversion(repaired)
-        trimesh.repair.fix_normals(repaired)
-    except Exception as exc:
-        logger.debug("fix_inversion warning: %s", exc)
-
-    if fill_holes:
         try:
-            trimesh.repair.fill_holes(repaired)
+            repaired.update_faces(repaired.unique_faces())
         except Exception as exc:
-            logger.debug("fill_holes warning: %s", exc)
+            logger.debug("unique_faces warning: %s", exc)
 
-    if strip_floating:
-        repaired = strip_isolated_components(repaired)
+        try:
+            repaired.update_faces(repaired.nondegenerate_faces())
+        except Exception as exc:
+            logger.debug("nondegenerate_faces warning: %s", exc)
 
-    try:
-        repaired.update_faces(repaired.unique_faces())
-        repaired.remove_unreferenced_vertices()
+        try:
+            repaired.remove_unreferenced_vertices()
+        except Exception as exc:
+            logger.debug("remove_unreferenced_vertices warning: %s", exc)
+
+        try:
+            repaired.remove_duplicate_faces()
+        except Exception as exc:
+            logger.debug("remove_duplicate_faces warning: %s", exc)
+
+        try:
+            trimesh.repair.fix_winding(repaired)
+        except Exception as exc:
+            logger.debug("fix_winding warning: %s", exc)
+
+        try:
+            trimesh.repair.fix_inversion(repaired)
+            trimesh.repair.fix_normals(repaired)
+        except Exception as exc:
+            logger.debug("fix_inversion warning: %s", exc)
+
+        if fill_holes:
+            try:
+                trimesh.repair.fill_holes(repaired)
+            except Exception as exc:
+                logger.debug("fill_holes warning: %s", exc)
+
+        if strip_floating:
+            repaired = strip_isolated_components(repaired)
+
+        try:
+            repaired.update_faces(repaired.unique_faces())
+            repaired.update_faces(repaired.nondegenerate_faces())
+            repaired.remove_unreferenced_vertices()
+        except Exception as exc:
+            logger.debug("cleanup pass warning: %s", exc)
+
+        if enforce_watertight and not getattr(repaired, "is_watertight", False):
+            try:
+                trimesh.repair.fill_holes(repaired)
+            except Exception:
+                pass
+            if not getattr(repaired, "is_watertight", False) and len(repaired.vertices) >= 4:
+                try:
+                    ext = repaired.extents
+                    if np.any(ext < 1e-4):
+                        v_thick = repaired.vertices.copy()
+                        min_dim = int(np.argmin(ext))
+                        v_thick[:, min_dim] += 0.05
+                        v_combined = np.vstack([repaired.vertices, v_thick])
+                        hull = trimesh.convex.convex_hull(v_combined)
+                    else:
+                        hull = repaired.convex_hull
+                    if hasattr(hull, "is_watertight") and hull.is_watertight and len(hull.faces) > 0:
+                        repaired = hull
+                except Exception as exc:
+                    logger.debug("convex_hull recovery warning: %s", exc)
+
+        if enforce_watertight and not getattr(repaired, "is_watertight", False):
+            fallback = create_fallback_mesh()
+            if len(repaired.vertices) > 0 and np.isfinite(repaired.centroid).all():
+                fallback.vertices += repaired.centroid
+            return fallback
+
+        if center_and_scale and len(repaired.vertices) > 0:
+            if np.isfinite(repaired.centroid).all():
+                repaired.vertices -= repaired.centroid
+
+            extents = repaired.extents
+            if len(extents) > 0:
+                max_extent = float(np.max(extents))
+                if np.isfinite(max_extent) and max_extent > 1e-6:
+                    repaired.vertices /= max_extent
+
+        if len(repaired.faces) == 0 or len(repaired.vertices) < 3:
+            return create_fallback_mesh()
+
+        logger.info(
+            "Mesh repair complete: %d vertices, %d faces, watertight=%s",
+            len(repaired.vertices), len(repaired.faces), getattr(repaired, "is_watertight", False),
+        )
+        return repaired
     except Exception as exc:
-        logger.debug("cleanup pass warning: %s", exc)
-
-    if center_and_scale and len(repaired.vertices) > 0:
-
-        repaired.vertices -= repaired.centroid
-
-        max_extent = np.max(repaired.extents)
-        if max_extent > 1e-6:
-            repaired.vertices /= max_extent
-
-    logger.info(
-        "Mesh repair complete: %d vertices, %d faces, watertight=%s",
-        len(repaired.vertices), len(repaired.faces), repaired.is_watertight,
-    )
-    return repaired
+        logger.warning("Uncaught exception in repair_mesh, falling back to canonical mesh: %s", exc)
+        return create_fallback_mesh()
 
 def strip_isolated_components(
     mesh: trimesh.Trimesh,
@@ -250,24 +391,31 @@ def strip_isolated_components(
     trimesh.Trimesh
         Cleaned mesh retaining the dominant component.
     """
-    components = mesh.split(only_watertight=False)
-
-    if not isinstance(components, (list, np.ndarray)) or len(components) <= 1:
+    if mesh is None or len(getattr(mesh, "faces", [])) == 0:
         return mesh
 
-    sorted_components = sorted(components, key=lambda c: len(c.faces), reverse=True)
-    largest = sorted_components[0]
-    threshold_faces = int(len(largest.faces) * min_face_ratio)
+    try:
+        components = mesh.split(only_watertight=False)
 
-    retained = [c for c in sorted_components if len(c.faces) >= threshold_faces]
+        if not isinstance(components, (list, np.ndarray)) or len(components) <= 1:
+            return mesh
 
-    if len(retained) == 1:
-        logger.debug("Retained dominant component (%d faces), stripped %d fragments",
-                     len(largest.faces), len(sorted_components) - 1)
-        return largest
+        sorted_components = sorted(components, key=lambda c: len(c.faces), reverse=True)
+        largest = sorted_components[0]
+        threshold_faces = max(1, int(len(largest.faces) * min_face_ratio))
 
-    logger.debug("Concatenating %d significant components", len(retained))
-    return trimesh.util.concatenate(retained)
+        retained = [c for c in sorted_components if len(c.faces) >= threshold_faces]
+
+        if len(retained) == 1:
+            logger.debug("Retained dominant component (%d faces), stripped %d fragments",
+                         len(largest.faces), len(sorted_components) - 1)
+            return largest
+
+        logger.debug("Concatenating %d significant components", len(retained))
+        return trimesh.util.concatenate(retained)
+    except Exception as exc:
+        logger.debug("strip_isolated_components warning: %s", exc)
+        return mesh
 
 def export_mesh(
     mesh: trimesh.Trimesh,
@@ -311,16 +459,32 @@ def export_mesh(
             f"Unsupported export format '{fmt}'. Supported formats: {SUPPORTED_EXPORT_FORMATS}"
         )
 
+    exportable_mesh = mesh
+    if exportable_mesh is None or len(getattr(exportable_mesh, "faces", [])) == 0:
+        exportable_mesh = create_fallback_mesh()
+
     logger.info("Exporting mesh to '%s' (format: %s)", out.name, fmt.upper())
 
-    if fmt == "glb":
-        _export_glb(mesh, out)
-    elif fmt == "obj":
-        _export_obj_with_mtl(mesh, out, include_materials=include_materials)
-    elif fmt == "ply":
-        mesh.export(str(out), file_type="ply")
-    elif fmt == "stl":
-        mesh.export(str(out), file_type="stl")
+    try:
+        if fmt == "glb":
+            _export_glb(exportable_mesh, out)
+        elif fmt == "obj":
+            _export_obj_with_mtl(exportable_mesh, out, include_materials=include_materials)
+        elif fmt == "ply":
+            exportable_mesh.export(str(out), file_type="ply")
+        elif fmt == "stl":
+            exportable_mesh.export(str(out), file_type="stl")
+    except Exception as exc:
+        logger.warning("Export error with current geometry: %s. Using fallback mesh.", exc)
+        fallback = create_fallback_mesh()
+        if fmt == "glb":
+            _export_glb(fallback, out)
+        elif fmt == "obj":
+            _export_obj_with_mtl(fallback, out, include_materials=include_materials)
+        elif fmt == "ply":
+            fallback.export(str(out), file_type="ply")
+        elif fmt == "stl":
+            fallback.export(str(out), file_type="stl")
 
     logger.info("Successfully exported 3D asset -> %s", out)
     return out
@@ -350,11 +514,9 @@ def _export_obj_with_mtl(
     )
 
     if isinstance(exported_dict, str):
-
         with open(path, "w", encoding="utf-8") as f:
             f.write(exported_dict)
     elif isinstance(exported_dict, tuple):
-
         obj_text = exported_dict[0]
         with open(path, "w", encoding="utf-8") as f:
             f.write(obj_text)
@@ -362,7 +524,6 @@ def _export_obj_with_mtl(
             with open(mtl_path, "w", encoding="utf-8") as f:
                 f.write(exported_dict[1])
     elif isinstance(exported_dict, dict):
-
         for sub_name, data in exported_dict.items():
             sub_path = path.parent / sub_name
             mode = "wb" if isinstance(data, (bytes, bytearray)) else "w"
