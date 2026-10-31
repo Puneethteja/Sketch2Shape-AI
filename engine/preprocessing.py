@@ -41,13 +41,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 if TYPE_CHECKING:
-    import torch  # resolved by type-checkers only; not required at runtime
+    import torch
 
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -55,7 +54,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sketch2shape.preprocessing")
 
-# ── Public API ────────────────────────────────────────────────────────────────
 __all__ = [
     "ingest",
     "load_image",
@@ -68,27 +66,18 @@ __all__ = [
     "PAD_COLOR",
 ]
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-TARGET_SIZE: Tuple[int, int] = (512, 512)       # (width, height)
-PAD_COLOR: Tuple[int, int, int] = (255, 255, 255)  # white letterbox padding
+TARGET_SIZE: Tuple[int, int] = (512, 512)
+PAD_COLOR: Tuple[int, int, int] = (255, 255, 255)
 
-# Bilateral filter defaults
-BILATERAL_D: int = 9          # neighbourhood diameter
-BILATERAL_SIGMA_COLOR: float = 75.0  # colour sigma
-BILATERAL_SIGMA_SPACE: float = 75.0  # spatial sigma
+BILATERAL_D: int = 9
+BILATERAL_SIGMA_COLOR: float = 75.0
+BILATERAL_SIGMA_SPACE: float = 75.0
 
-# Lineart / adaptive-threshold defaults
-LINEART_BLOCK_SIZE: int = 11      # must be odd; local neighbourhood for threshold
-LINEART_C: int = 2                # constant subtracted from weighted mean
-LINEART_MORPH_KERNEL: int = 2     # structuring element size for morphological ops
+LINEART_BLOCK_SIZE: int = 11
+LINEART_C: int = 2
+LINEART_MORPH_KERNEL: int = 2
 
-# Type alias for accepted ingestion inputs
 ImageInput = Union[str, Path, bytes, np.ndarray, Image.Image]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 1 · Universal Ingestion
-# ─────────────────────────────────────────────────────────────────────────────
 
 def ingest(source: ImageInput) -> np.ndarray:
     """
@@ -122,31 +111,26 @@ def ingest(source: ImageInput) -> np.ndarray:
         If *source* cannot be decoded as a valid image, or is an unsupported
         type.
     """
-    # ── Already a NumPy array ─────────────────────────────────────────────────
+
     if isinstance(source, np.ndarray):
         logger.debug("ingest: received np.ndarray directly — passthrough")
         return source
 
-    # ── Pillow Image ──────────────────────────────────────────────────────────
     if isinstance(source, Image.Image):
         logger.debug("ingest: received PIL.Image — converting to ndarray")
         return np.array(source)
 
-    # ── bytes (raw image data from canvas Blob / HTTP upload) ────────────────
     if isinstance(source, (bytes, bytearray)):
         logger.info("ingest: decoding raw image bytes (%d B)", len(source))
         return _pil_to_array(Image.open(io.BytesIO(source)))
 
-    # ── String — file path or base64 data-URL ────────────────────────────────
     if isinstance(source, (str, Path)):
         src_str = str(source)
 
-        # base64 data-URL: "data:image/<fmt>;base64,<payload>"
         if src_str.startswith("data:"):
             logger.info("ingest: detected base64 data-URL — decoding")
             return _decode_dataurl(src_str)
 
-        # File-system path
         path = Path(src_str)
         if not path.exists():
             raise FileNotFoundError(f"Image not found: {path.resolve()}")
@@ -158,10 +142,9 @@ def ingest(source: ImageInput) -> np.ndarray:
         "Expected str, Path, bytes, np.ndarray, or PIL.Image."
     )
 
-
 def _pil_to_array(pil_img: Image.Image) -> np.ndarray:
     """Force-decode a Pillow image and return it as a uint8 NumPy array."""
-    pil_img = ImageOps.exif_transpose(pil_img)  # honour EXIF rotation
+    pil_img = ImageOps.exif_transpose(pil_img)
     pil_img.load()
     arr = np.array(pil_img)
     logger.debug(
@@ -169,7 +152,6 @@ def _pil_to_array(pil_img: Image.Image) -> np.ndarray:
         arr.shape, arr.dtype, pil_img.mode,
     )
     return arr
-
 
 def _decode_dataurl(data_url: str) -> np.ndarray:
     """
@@ -179,22 +161,15 @@ def _decode_dataurl(data_url: str) -> np.ndarray:
     (no ``data:`` prefix) as a fallback.
     """
     try:
-        # Strip the header: "data:image/png;base64,"
+
         header, b64_data = data_url.split(",", 1)
     except ValueError:
-        b64_data = data_url  # plain base64 — try anyway
+        b64_data = data_url
 
     raw_bytes = base64.b64decode(b64_data)
     return _pil_to_array(Image.open(io.BytesIO(raw_bytes)))
 
-
-# Backward-compatible alias
 load_image = ingest
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 · Channel Normalisation → RGB uint8
-# ─────────────────────────────────────────────────────────────────────────────
 
 def to_rgb(img: np.ndarray) -> np.ndarray:
     """
@@ -216,12 +191,11 @@ def to_rgb(img: np.ndarray) -> np.ndarray:
     ValueError
         For arrays with an unsupported number of dimensions or channels.
     """
-    # ── Ensure uint8 ─────────────────────────────────────────────────────────
+
     if img.dtype != np.uint8:
         img = (np.clip(img, 0, 1) * 255).astype(np.uint8) \
             if img.max() <= 1.0 else img.astype(np.uint8)
 
-    # ── 2-D grayscale (H, W) → (H, W, 3) ────────────────────────────────────
     if img.ndim == 2:
         img = np.stack([img] * 3, axis=-1)
         logger.debug("to_rgb: grayscale → RGB")
@@ -235,15 +209,15 @@ def to_rgb(img: np.ndarray) -> np.ndarray:
     channels = img.shape[2]
 
     if channels == 1:
-        # (H, W, 1) → (H, W, 3)
+
         img = np.concatenate([img] * 3, axis=-1)
         logger.debug("to_rgb: single-channel → RGB")
 
     elif channels == 3:
-        pass  # already RGB
+        pass
 
     elif channels == 4:
-        # RGBA → RGB composited over white background
+
         alpha = img[:, :, 3:4].astype(np.float32) / 255.0
         rgb   = img[:, :, :3].astype(np.float32)
         white = np.full_like(rgb, 255.0)
@@ -257,11 +231,6 @@ def to_rgb(img: np.ndarray) -> np.ndarray:
         )
 
     return img
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 3 · Letterbox Pad + Resize → TARGET_SIZE
-# ─────────────────────────────────────────────────────────────────────────────
 
 def pad_and_resize(
     img: np.ndarray,
@@ -314,11 +283,6 @@ def pad_and_resize(
     )
     return canvas
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 4 · Bilateral Filter
-# ─────────────────────────────────────────────────────────────────────────────
-
 def bilateral_filter(
     img: np.ndarray,
     d: int = BILATERAL_D,
@@ -365,11 +329,6 @@ def bilateral_filter(
         d, sigma_color, sigma_space,
     )
     return filtered_rgb
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 5 · Binary Lineart / Scribble Extraction
-# ─────────────────────────────────────────────────────────────────────────────
 
 def to_lineart(
     img: np.ndarray,
@@ -434,10 +393,8 @@ def to_lineart(
             f"to_lineart: block_size must be an odd integer ≥ 3, got {block_size}."
         )
 
-    # Step 1 — grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    # Step 2 — Gaussian adaptive threshold
     binary = cv2.adaptiveThreshold(
         gray,
         maxValue=255,
@@ -447,7 +404,6 @@ def to_lineart(
         C=c,
     )
 
-    # Step 3 — morphological opening (noise removal, stroke preservation)
     if morph_kernel_size > 1:
         kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
@@ -455,7 +411,6 @@ def to_lineart(
         )
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
-    # Step 4 — optional invert (strokes → white on black)
     if invert:
         binary = cv2.bitwise_not(binary)
 
@@ -465,26 +420,21 @@ def to_lineart(
     )
     return binary
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# End-to-End Convenience Wrapper
-# ─────────────────────────────────────────────────────────────────────────────
-
 def preprocess(
     source: ImageInput,
     target_size: Tuple[int, int] = TARGET_SIZE,
     pad_color: Tuple[int, int, int] = PAD_COLOR,
-    # bilateral filter
+
     bilateral_d: int = BILATERAL_D,
     bilateral_sigma_color: float = BILATERAL_SIGMA_COLOR,
     bilateral_sigma_space: float = BILATERAL_SIGMA_SPACE,
-    # lineart
+
     return_lineart: bool = False,
     lineart_block_size: int = LINEART_BLOCK_SIZE,
     lineart_c: int = LINEART_C,
     lineart_morph_kernel: int = LINEART_MORPH_KERNEL,
     lineart_invert: bool = True,
-    # output
+
     return_tensor: bool = True,
 ) -> "Union[np.ndarray, torch.Tensor]":
     """
@@ -554,14 +504,13 @@ def preprocess(
         )
         logger.info("preprocess(): lineart mask shape=%s", mask.shape)
         if return_tensor:
-            return _to_tensor(mask[:, :, np.newaxis])  # (H,W,1) → (1,H,W)
+            return _to_tensor(mask[:, :, np.newaxis])
         return mask
 
     logger.info("preprocess(): colour output shape=%s", img.shape)
     if return_tensor:
-        return _to_tensor(img)  # (H,W,3) → (3,H,W)
+        return _to_tensor(img)
     return img
-
 
 def _to_tensor(arr: np.ndarray) -> "torch.Tensor":
     """
@@ -584,12 +533,6 @@ def _to_tensor(arr: np.ndarray) -> "torch.Tensor":
     logger.debug("_to_tensor: %s → Tensor%s", arr.shape, tuple(tensor.shape))
     return tensor
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI smoke-test
-#   python engine/preprocessing.py <image_path> [--lineart]
-# ─────────────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import sys
 
@@ -609,7 +552,7 @@ if __name__ == "__main__":
     out_path = out_dir / (stem + suffix)
 
     if do_lineart:
-        cv2.imwrite(str(out_path), result)  # grayscale — no colour conversion needed
+        cv2.imwrite(str(out_path), result)
     else:
         cv2.imwrite(str(out_path), cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
 

@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import utils.preprocessing as up
 
-
 def test_utils_preprocessing_exports():
     """Verify all required API symbols are exported from utils.preprocessing."""
     expected = [
@@ -35,7 +34,6 @@ def test_utils_preprocessing_exports():
     ]
     for symbol in expected:
         assert hasattr(up, symbol), f"Missing {symbol} in utils.preprocessing"
-
 
 def test_utils_preprocessing_pipeline_execution():
     """Verify that preprocess() called via utils.preprocessing works end-to-end."""

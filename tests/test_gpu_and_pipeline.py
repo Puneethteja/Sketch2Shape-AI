@@ -22,14 +22,12 @@ from engine.check_gpu import (
     run_gpu_diagnostic,
 )
 
-
 def test_cuda_availability_check():
     """Verify that check_cuda_availability returns a boolean and status string."""
     is_avail, msg = check_cuda_availability()
     assert isinstance(is_avail, bool)
     assert isinstance(msg, str)
     assert len(msg) > 0
-
 
 def test_get_gpu_info_structure():
     """Verify get_gpu_info returns standard dictionary fields."""
@@ -39,13 +37,11 @@ def test_get_gpu_info_structure():
     assert "vram_total_gb" in info
     assert "vram_free_gb" in info
 
-
 def test_fp16_support_check():
     """Verify check_fp16_support returns a boolean and message."""
     fp16_ok, msg = check_fp16_support()
     assert isinstance(fp16_ok, bool)
     assert isinstance(msg, str)
-
 
 def test_run_gpu_diagnostic():
     """Verify full diagnostic report structure."""

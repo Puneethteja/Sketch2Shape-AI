@@ -25,10 +25,8 @@ from utils.preprocessing import ImageInput, ingest, to_rgb
 
 logger = logging.getLogger("sketch2shape.segmentation")
 
-# Model sessions cache to prevent reloading ONNX models across repeated calls
 _SESSION_CACHE: Dict[str, Any] = {}
 
-# Supported rembg model backbones
 SUPPORTED_SEGMENTATION_MODELS: Tuple[str, ...] = (
     "u2net",
     "u2netp",
@@ -39,12 +37,7 @@ SUPPORTED_SEGMENTATION_MODELS: Tuple[str, ...] = (
 
 DEFAULT_MODEL: str = "u2net"
 DEFAULT_TARGET_SIZE: Tuple[int, int] = (512, 512)
-DEFAULT_PADDING_RATIO: float = 0.1  # 10% border padding around subject
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Session Management & rembg Integration
-# ─────────────────────────────────────────────────────────────────────────────
+DEFAULT_PADDING_RATIO: float = 0.1
 
 def get_rembg_session(model_name: str = DEFAULT_MODEL) -> Any:
     """
@@ -75,7 +68,6 @@ def get_rembg_session(model_name: str = DEFAULT_MODEL) -> Any:
     except Exception as exc:
         logger.warning("Could not initialize rembg session for '%s': %s", model_name, exc)
         return None
-
 
 def remove_background(
     image: ImageInput,
@@ -114,7 +106,7 @@ def remove_background(
     PIL.Image.Image
         RGBA image with transparent background, or single-channel 'L' mask if only_mask=True.
     """
-    # Normalize input to PIL Image
+
     raw_array = ingest(image)
     if raw_array.ndim == 2:
         pil_input = Image.fromarray(raw_array, mode="L").convert("RGB")
@@ -141,9 +133,7 @@ def remove_background(
         except Exception as exc:
             logger.warning("rembg inference failed (%s); falling back to heuristic segmentation", exc)
 
-    # ── Heuristic / Offline Fallback ───────────────────────────────────────────
     return _heuristic_segmentation_fallback(pil_input, only_mask=only_mask)
-
 
 def _heuristic_segmentation_fallback(
     pil_img: Image.Image,
@@ -156,25 +146,17 @@ def _heuristic_segmentation_fallback(
     rgb_arr = np.array(pil_img.convert("RGB"))
     gray = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2GRAY)
 
-    # Otsu adaptive inversion thresholding
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Morphological cleanup to unify foreground strokes/solid areas
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
     if only_mask:
         return Image.fromarray(mask, mode="L")
 
-    # Combine RGB with alpha mask
     rgba = np.dstack([rgb_arr, mask])
     return Image.fromarray(rgba, mode="RGBA")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# High-Resolution Alpha Mask Extraction
-# ─────────────────────────────────────────────────────────────────────────────
 
 def extract_alpha_mask(
     image: ImageInput,
@@ -214,11 +196,6 @@ def extract_alpha_mask(
 
     return mask_arr
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Bounding Box, Cropping & Centering
-# ─────────────────────────────────────────────────────────────────────────────
-
 def get_foreground_bbox(
     alpha_mask: np.ndarray,
     min_opacity: int = 10,
@@ -245,7 +222,6 @@ def get_foreground_bbox(
     x_min, x_max = int(np.min(active_x)), int(np.max(active_x))
     y_min, y_max = int(np.min(active_y)), int(np.max(active_y))
     return x_min, y_min, x_max, y_max
-
 
 def crop_and_center_subject(
     rgba_image: Union[Image.Image, np.ndarray],
@@ -297,7 +273,6 @@ def crop_and_center_subject(
     bbox = get_foreground_bbox(alpha_arr)
     target_w, target_h = target_size
 
-    # Handle empty / blank input
     if bbox is None:
         logger.warning("crop_and_center_subject: No foreground detected. Returning blank canvas.")
         canvas = Image.new("RGBA", target_size, background_color)
@@ -307,10 +282,8 @@ def crop_and_center_subject(
     crop_w = max(1, x_max - x_min + 1)
     crop_h = max(1, y_max - y_min + 1)
 
-    # Crop tightly to subject
     cropped = pil_rgba.crop((x_min, y_min, x_max + 1, y_max + 1))
 
-    # Calculate uniform scaling factor to fit within active canvas area
     avail_w = max(1, int(target_w * (1.0 - 2.0 * padding_ratio)))
     avail_h = max(1, int(target_h * (1.0 - 2.0 * padding_ratio)))
 
@@ -318,11 +291,9 @@ def crop_and_center_subject(
     new_w = max(1, int(round(crop_w * scale)))
     new_h = max(1, int(round(crop_h * scale)))
 
-    # High-quality resampling: Lanczos for scaling
     resample_method = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
     scaled_subject = cropped.resize((new_w, new_h), resample=resample_method)
 
-    # Create new neutral canvas and center subject
     canvas = Image.new("RGBA", target_size, background_color)
     paste_x = (target_w - new_w) // 2
     paste_y = (target_h - new_h) // 2
@@ -337,11 +308,6 @@ def crop_and_center_subject(
     if return_bbox:
         return canvas, bbox
     return canvas
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# End-to-End Orchestrator
-# ─────────────────────────────────────────────────────────────────────────────
 
 def isolate_and_center(
     source: ImageInput,
@@ -385,10 +351,8 @@ def isolate_and_center(
     """
     logger.info("Executing isolate_and_center segmentation pipeline")
 
-    # Step 1 & 2: Segment subject
     segmented_rgba = remove_background(source, model_name=model_name)
 
-    # Step 3 & 4: Crop & Center
     centered_rgba = crop_and_center_subject(
         segmented_rgba,
         target_size=target_size,
@@ -399,15 +363,9 @@ def isolate_and_center(
     if not neutral_background:
         return centered_rgba
 
-    # Step 5: Composite over solid neutral background
     solid_bg = Image.new("RGBA", target_size, (*background_rgb, 255))
     solid_bg.paste(centered_rgba, (0, 0), mask=centered_rgba)
     return solid_bg.convert("RGB")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI Utility
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse

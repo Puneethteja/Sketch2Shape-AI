@@ -27,11 +27,6 @@ logger = logging.getLogger("sketch2shape.mesh_utils")
 
 SUPPORTED_EXPORT_FORMATS = ("glb", "obj", "ply", "stl")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Loading & Geometry Extraction
-# ─────────────────────────────────────────────────────────────────────────────
-
 def load_mesh(source: Union[str, Path, trimesh.Trimesh, trimesh.Scene]) -> trimesh.Trimesh:
     """
     Load a 3D mesh from a file path or extract it from an in-memory Trimesh / Scene.
@@ -76,7 +71,6 @@ def load_mesh(source: Union[str, Path, trimesh.Trimesh, trimesh.Scene]) -> trime
     else:
         raise ValueError(f"Unsupported geometry type loaded from {path}: {type(loaded)}")
 
-
 def _scene_to_trimesh(scene: trimesh.Scene) -> trimesh.Trimesh:
     """Concatenate all sub-meshes in a trimesh.Scene into a single Trimesh."""
     if len(scene.geometry) == 0:
@@ -88,11 +82,6 @@ def _scene_to_trimesh(scene: trimesh.Scene) -> trimesh.Trimesh:
 
     logger.debug("Merging %d sub-meshes from Scene into single Trimesh", len(meshes))
     return trimesh.util.concatenate(meshes)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Inspection & Metric Verification
-# ─────────────────────────────────────────────────────────────────────────────
 
 def inspect_mesh(mesh: trimesh.Trimesh) -> Dict[str, Any]:
     """
@@ -124,10 +113,8 @@ def inspect_mesh(mesh: trimesh.Trimesh) -> Dict[str, Any]:
     extents = tuple(float(x) for x in mesh.bounding_box.extents)
     centroid = tuple(float(x) for x in mesh.centroid)
 
-    # Volume is only mathematically meaningful for watertight closed manifolds
     vol = float(mesh.volume) if is_watertight else 0.0
 
-    # Count disconnected sub-components
     components = mesh.split(only_watertight=False)
     body_count = len(components) if isinstance(components, (list, np.ndarray)) else 1
 
@@ -144,15 +131,9 @@ def inspect_mesh(mesh: trimesh.Trimesh) -> Dict[str, Any]:
         "body_count": body_count,
     }
 
-
 def is_watertight(mesh: trimesh.Trimesh) -> bool:
     """Convenience boolean check for watertight topology."""
     return bool(mesh.is_watertight)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Non-Manifold Repair Sequence (§3.4 Architecture Spec)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def repair_mesh(
     mesh: trimesh.Trimesh,
@@ -195,60 +176,51 @@ def repair_mesh(
         len(repaired.vertices), len(repaired.faces),
     )
 
-    # Step 1: Remove duplicate faces
     try:
         repaired.update_faces(repaired.unique_faces())
     except Exception as exc:
         logger.debug("unique_faces warning: %s", exc)
 
-    # Step 2: Remove degenerate faces
     try:
         repaired.update_faces(repaired.nondegenerate_faces())
     except Exception as exc:
         logger.debug("nondegenerate_faces warning: %s", exc)
 
-    # Step 3: Remove unreferenced vertices
     try:
         repaired.remove_unreferenced_vertices()
     except Exception as exc:
         logger.debug("remove_unreferenced_vertices warning: %s", exc)
 
-    # Step 4: Fix winding consistency
     try:
         trimesh.repair.fix_winding(repaired)
     except Exception as exc:
         logger.debug("fix_winding warning: %s", exc)
 
-    # Step 5: Fix inverted normals
     try:
         trimesh.repair.fix_inversion(repaired)
         trimesh.repair.fix_normals(repaired)
     except Exception as exc:
         logger.debug("fix_inversion warning: %s", exc)
 
-    # Step 6: Fill holes
     if fill_holes:
         try:
             trimesh.repair.fill_holes(repaired)
         except Exception as exc:
             logger.debug("fill_holes warning: %s", exc)
 
-    # Step 7: Connected Component Analysis (strip floating artifacts)
     if strip_floating:
         repaired = strip_isolated_components(repaired)
 
-    # Final cleanup pass
     try:
         repaired.update_faces(repaired.unique_faces())
         repaired.remove_unreferenced_vertices()
     except Exception as exc:
         logger.debug("cleanup pass warning: %s", exc)
 
-    # Normalization (optional)
     if center_and_scale and len(repaired.vertices) > 0:
-        # Center at origin
+
         repaired.vertices -= repaired.centroid
-        # Scale to max extent of 1.0
+
         max_extent = np.max(repaired.extents)
         if max_extent > 1e-6:
             repaired.vertices /= max_extent
@@ -258,7 +230,6 @@ def repair_mesh(
         len(repaired.vertices), len(repaired.faces), repaired.is_watertight,
     )
     return repaired
-
 
 def strip_isolated_components(
     mesh: trimesh.Trimesh,
@@ -284,7 +255,6 @@ def strip_isolated_components(
     if not isinstance(components, (list, np.ndarray)) or len(components) <= 1:
         return mesh
 
-    # Rank components by face count
     sorted_components = sorted(components, key=lambda c: len(c.faces), reverse=True)
     largest = sorted_components[0]
     threshold_faces = int(len(largest.faces) * min_face_ratio)
@@ -298,11 +268,6 @@ def strip_isolated_components(
 
     logger.debug("Concatenating %d significant components", len(retained))
     return trimesh.util.concatenate(retained)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Packaging & Multi-Format Export (.glb, .obj + .mtl, .ply)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def export_mesh(
     mesh: trimesh.Trimesh,
@@ -360,13 +325,11 @@ def export_mesh(
     logger.info("Successfully exported 3D asset -> %s", out)
     return out
 
-
 def _export_glb(mesh: trimesh.Trimesh, path: Path) -> None:
     """Export mesh as binary glTF (.glb) suitable for Three.js WebGL viewport."""
     glb_bytes = trimesh.exchange.gltf.export_glb(mesh)
     with open(path, "wb") as f:
         f.write(glb_bytes)
-
 
 def _export_obj_with_mtl(
     mesh: trimesh.Trimesh,
@@ -387,11 +350,11 @@ def _export_obj_with_mtl(
     )
 
     if isinstance(exported_dict, str):
-        # Plain OBJ text without separate material bundle
+
         with open(path, "w", encoding="utf-8") as f:
             f.write(exported_dict)
     elif isinstance(exported_dict, tuple):
-        # (obj_text, mtl_text) or similar tuple
+
         obj_text = exported_dict[0]
         with open(path, "w", encoding="utf-8") as f:
             f.write(obj_text)
@@ -399,18 +362,13 @@ def _export_obj_with_mtl(
             with open(mtl_path, "w", encoding="utf-8") as f:
                 f.write(exported_dict[1])
     elif isinstance(exported_dict, dict):
-        # Multi-file bundle: {"model.obj": str/bytes, "model.mtl": str, ...}
+
         for sub_name, data in exported_dict.items():
             sub_path = path.parent / sub_name
             mode = "wb" if isinstance(data, (bytes, bytearray)) else "w"
             encoding = None if "b" in mode else "utf-8"
             with open(sub_path, mode, encoding=encoding) as f:
                 f.write(data)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI Utility
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse
