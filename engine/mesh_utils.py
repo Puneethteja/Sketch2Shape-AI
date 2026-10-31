@@ -73,6 +73,33 @@ class TrimeshFallback:
     def is_watertight(self, val: bool) -> None:
         self._is_watertight = val
 
+    @property
+    def centroid(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros(3, dtype=np.float32)
+        return np.mean(self.vertices, axis=0).astype(np.float32)
+
+    @property
+    def extents(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros(3, dtype=np.float32)
+        return (np.max(self.vertices, axis=0) - np.min(self.vertices, axis=0)).astype(np.float32)
+
+    @property
+    def bounds(self) -> np.ndarray:
+        if len(self.vertices) == 0:
+            return np.zeros((2, 3), dtype=np.float32)
+        return np.array([np.min(self.vertices, axis=0), np.max(self.vertices, axis=0)], dtype=np.float32)
+
+    def copy(self) -> TrimeshFallback:
+        return TrimeshFallback(
+            vertices=self.vertices.copy(),
+            faces=self.faces.copy(),
+            vertex_normals=self.vertex_normals.copy() if self.vertex_normals is not None else None,
+            vertex_colors=self.vertex_colors.copy() if self.vertex_colors is not None else None,
+            is_watertight=self._is_watertight,
+        )
+
     def _compute_normals(self) -> np.ndarray:
         normals = np.zeros_like(self.vertices, dtype=np.float32)
         if len(self.faces) == 0:
@@ -140,20 +167,35 @@ class TrimeshFallback:
             return str(path)
 
         elif fmt == "stl":
-            # Binary STL
+            # High-performance standard binary STL (Stereolithography) serializer
             with open(path, "wb") as f:
-                header = b"Sketch2Shape AI Binary STL" + b"\0" * 54
+                header = b"Sketch2Shape AI Binary STL (TechZephyr 4.0)" + b"\0" * 80
                 f.write(header[:80])
-                f.write(struct.pack("<I", len(self.faces)))
-                for tri in self.faces:
-                    v0, v1, v2 = self.vertices[tri]
-                    norm = np.cross(v1 - v0, v2 - v0)
-                    norm /= (np.linalg.norm(norm) + 1e-8)
-                    f.write(struct.pack("<3f", *norm))
-                    f.write(struct.pack("<3f", *v0))
-                    f.write(struct.pack("<3f", *v1))
-                    f.write(struct.pack("<3f", *v2))
-                    f.write(struct.pack("<H", 0))
+                n_faces = len(self.faces)
+                f.write(struct.pack("<I", n_faces))
+                if n_faces > 0:
+                    tris = self.vertices[self.faces]  # (N, 3, 3) float32
+                    v0 = tris[:, 0]
+                    v1 = tris[:, 1]
+                    v2 = tris[:, 2]
+                    normals = np.cross(v1 - v0, v2 - v0)
+                    norm_lens = np.linalg.norm(normals, axis=1, keepdims=True) + 1e-8
+                    unit_normals = (normals / norm_lens).astype(np.float32)
+
+                    dtype_stl = np.dtype([
+                        ('normal', ('<f4', 3)),
+                        ('v0', ('<f4', 3)),
+                        ('v1', ('<f4', 3)),
+                        ('v2', ('<f4', 3)),
+                        ('attr', '<u2'),
+                    ])
+                    facet_data = np.zeros(n_faces, dtype=dtype_stl)
+                    facet_data['normal'] = unit_normals
+                    facet_data['v0'] = v0
+                    facet_data['v1'] = v1
+                    facet_data['v2'] = v2
+                    facet_data['attr'] = 0
+                    f.write(facet_data.tobytes())
             return str(path)
 
         elif fmt in ("glb", "gltf"):

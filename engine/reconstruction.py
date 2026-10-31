@@ -48,6 +48,7 @@ from engine.mesh_utils import (
     repair_mesh,
     trimesh,
 )
+from engine.geometry_engine import UniversalGeometryEngine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -259,6 +260,8 @@ class MeshReconstructor:
         self,
         image_input: Union[Image.Image, np.ndarray, Path, str],
         target_faces: Optional[int] = None,
+        prompt: str = "",
+        sketch_input: Optional[Any] = None,
     ) -> Tuple[Any, np.ndarray, np.ndarray, float]:
         """
         End-to-end 3D reconstruction function ingesting a preprocessed foreground image.
@@ -293,8 +296,13 @@ class MeshReconstructor:
             # Neural InstantMesh / LRM triplane reconstruction pass
             raw_mesh = self._run_neural_reconstruction(img_np)
         else:
-            # Algorithmic volumetric isosurface / Poisson synthesis
-            raw_mesh = self._synthesize_mesh_from_depth(img_np, depth_map)
+            # Extensible geometry synthesis (rotational lathe / hollow vessel / component / bilateral)
+            raw_mesh = self._synthesize_mesh_from_depth(
+                img_np,
+                depth_map,
+                prompt=prompt,
+                sketch_input=sketch_input if sketch_input is not None else pil_img,
+            )
 
         # 3. Apply Deterministic Watertight Repair Sequence (§3.4)
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
@@ -315,11 +323,27 @@ class MeshReconstructor:
         self,
         image_rgb: np.ndarray,
         depth_map: np.ndarray,
+        prompt: str = "",
+        sketch_input: Optional[Any] = None,
     ) -> Any:
         """
-        Reconstructs a full bilateral 3D closed shell from depth map and image textures.
-        Front-facing depth and mirrored back-facing hull are seamlessly fused into a manifold.
+        Synthesizes a watertight 3D mesh via UniversalGeometryEngine.
+        Dispatches to RotationalVesselEngine for vases/bottles/pots (lathe geometry with hollow cavity),
+        HollowVesselEngine for cups/bowls, ComponentGeometryEngine for chairs/tables,
+        or BilateralOrganicEngine for freeform shapes.
         """
+        return UniversalGeometryEngine.generate(
+            image_input=image_rgb,
+            depth_map=depth_map,
+            prompt=prompt,
+            sketch_input=sketch_input,
+        )
+
+    def _synthesize_mesh_from_depth_legacy(
+        self,
+        image_rgb: np.ndarray,
+        depth_map: np.ndarray,
+    ) -> Any:
         H, W = depth_map.shape
         stride = 4  # Downsample grid for balanced polygon count (approx 16k triangles)
 

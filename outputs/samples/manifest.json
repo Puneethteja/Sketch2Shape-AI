@@ -12,8 +12,8 @@
       "glb_path": "outputs/samples/sample_01_vase/model.glb",
       "obj_path": "outputs/samples/sample_01_vase/model.obj",
       "metrics": {
-        "vertex_count": 898,
-        "face_count": 1792,
+        "vertex_count": 7938,
+        "face_count": 15872,
         "is_watertight": true,
         "volume": 0.3288,
         "surface_area": 2.6866
