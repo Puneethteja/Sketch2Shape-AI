@@ -1,6 +1,7 @@
 /**
  * Sketch2Shape AI — Canvas Editor Component
- * High-performance 2D Sketchpad with Bezier Smoothing, History Stack, and Drag-and-Drop
+ * High-performance 2D Sketchpad with Bezier Smoothing, History Stack,
+ * Template Loading, and Auto-Persistence Callbacks.
  */
 
 export class CanvasEditor {
@@ -12,7 +13,7 @@ export class CanvasEditor {
       height: options.height || 512,
       strokeColor: options.strokeColor || "#0f172a",
       lineWidth: options.lineWidth || 4,
-      ...options
+      ...options,
     };
 
     this.isDrawing = false;
@@ -23,6 +24,10 @@ export class CanvasEditor {
     this.redoStack = [];
     this.maxHistory = 30;
     this.lastPoint = null;
+
+    // Callbacks
+    this.onHistoryChange = null;
+    this.onStrokeEnd = null;
 
     this.initCanvas();
     this.bindEvents();
@@ -38,6 +43,9 @@ export class CanvasEditor {
     if (save) this.saveState();
     this.ctx.fillStyle = "#ffffff";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    if (save && typeof this.onStrokeEnd === "function") {
+      this.onStrokeEnd(this.toDataURL());
+    }
   }
 
   saveState() {
@@ -55,6 +63,9 @@ export class CanvasEditor {
     const previous = this.undoStack.pop();
     this.ctx.putImageData(previous, 0, 0);
     this.triggerStateUpdate();
+    if (typeof this.onStrokeEnd === "function") {
+      this.onStrokeEnd(this.toDataURL());
+    }
   }
 
   redo() {
@@ -63,13 +74,16 @@ export class CanvasEditor {
     const next = this.redoStack.pop();
     this.ctx.putImageData(next, 0, 0);
     this.triggerStateUpdate();
+    if (typeof this.onStrokeEnd === "function") {
+      this.onStrokeEnd(this.toDataURL());
+    }
   }
 
   triggerStateUpdate() {
     if (typeof this.onHistoryChange === "function") {
       this.onHistoryChange({
         canUndo: this.undoStack.length > 0,
-        canRedo: this.redoStack.length > 0
+        canRedo: this.redoStack.length > 0,
       });
     }
   }
@@ -80,7 +94,7 @@ export class CanvasEditor {
     const scaleY = this.canvas.height / rect.height;
     return {
       x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
+      y: (e.clientY - rect.top) * scaleY,
     };
   }
 
@@ -88,7 +102,9 @@ export class CanvasEditor {
     this.canvas.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       this.isDrawing = true;
-      this.canvas.setPointerCapture(e.pointerId);
+      try {
+        this.canvas.setPointerCapture(e.pointerId);
+      } catch (err) {}
       this.saveState();
 
       const pt = this.getCanvasPos(e);
@@ -131,6 +147,10 @@ export class CanvasEditor {
       try {
         this.canvas.releasePointerCapture(e.pointerId);
       } catch (err) {}
+
+      if (typeof this.onStrokeEnd === "function") {
+        this.onStrokeEnd(this.toDataURL());
+      }
     };
 
     this.canvas.addEventListener("pointerup", endDrawing);
@@ -141,27 +161,64 @@ export class CanvasEditor {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          this.saveState();
-          this.ctx.fillStyle = "#ffffff";
-          this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-          // Letterbox scaling
-          const ratio = Math.min(this.canvas.width / img.width, this.canvas.height / img.height);
-          const drawW = img.width * ratio;
-          const drawH = img.height * ratio;
-          const drawX = (this.canvas.width - drawW) / 2;
-          const drawY = (this.canvas.height - drawH) / 2;
-
-          this.ctx.drawImage(img, drawX, drawY, drawW, drawH);
-          resolve();
-        };
-        img.onerror = reject;
-        img.src = event.target.result;
+        this.loadImageFromDataURL(event.target.result)
+          .then(resolve)
+          .catch(reject);
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
+    });
+  }
+
+  loadImageFromDataURL(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.saveState();
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Letterbox scaling
+        const ratio = Math.min(this.canvas.width / img.width, this.canvas.height / img.height);
+        const drawW = img.width * ratio;
+        const drawH = img.height * ratio;
+        const drawX = (this.canvas.width - drawW) / 2;
+        const drawY = (this.canvas.height - drawH) / 2;
+
+        this.ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        if (typeof this.onStrokeEnd === "function") {
+          this.onStrokeEnd(this.toDataURL());
+        }
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+
+  loadImageFromUrl(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        this.saveState();
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        const ratio = Math.min(this.canvas.width / img.width, this.canvas.height / img.height);
+        const drawW = img.width * ratio;
+        const drawH = img.height * ratio;
+        const drawX = (this.canvas.width - drawW) / 2;
+        const drawY = (this.canvas.height - drawH) / 2;
+
+        this.ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        if (typeof this.onStrokeEnd === "function") {
+          this.onStrokeEnd(this.toDataURL());
+        }
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = url;
     });
   }
 
@@ -171,7 +228,6 @@ export class CanvasEditor {
 
   isEmpty() {
     const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
-    // Check if everything is white
     for (let i = 0; i < imgData.length; i += 16) {
       if (imgData[i] < 240 || imgData[i + 1] < 240 || imgData[i + 2] < 240) {
         return false;

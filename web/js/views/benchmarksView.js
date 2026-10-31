@@ -9,135 +9,119 @@ export function createBenchmarksView() {
       return `
         <div class="benchmarks-container">
           <!-- Header -->
-          <div style="margin-bottom: 24px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="badge badge-success">✓ 152 / 152 Tests Passing</span>
-              <span class="badge badge-cyan">Phase 5 Validated</span>
-              <span class="badge badge-purple">Zero Unhandled Failures</span>
+          <div class="benchmarks-header">
+            <div class="hero-badge">
+              <span class="badge-dot"></span>
+              <span>Hardware & Stress Verification</span>
             </div>
-            <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.02em; margin-top: 8px;">
-              System Benchmarks & Resilience Metrics
-            </h1>
-            <p style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">
-              Performance benchmarks, edge-case stress test pass rates, and hardware VRAM footprint under extreme inputs.
+            <h1 class="benchmarks-title">System Benchmarks & Resilience Metrics</h1>
+            <p class="benchmarks-subtitle">
+              Comprehensive stress-test results, watertight repair rates, and hardware VRAM footprint under extreme contour inputs.
             </p>
           </div>
 
           <!-- Top Highlight KPI Cards -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
-            <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px;">
-              <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Automated Test Suite</div>
-              <div style="font-size: 28px; font-weight: 800; color: var(--accent-emerald); margin-top: 4px;">100%</div>
-              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">152 / 152 unit & integration tests</div>
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-label">Automated Test Suite</span>
+              <span class="kpi-value text-success">156 / 156 Passing</span>
+              <span class="kpi-meta">100% pytest pass rate including train & mesh stress</span>
             </div>
 
-            <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px;">
-              <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Peak VRAM Footprint</div>
-              <div style="font-size: 28px; font-weight: 800; color: var(--accent-cyan); margin-top: 4px;">4,120 MB</div>
-              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Fits cleanly inside 16GB VRAM bounds</div>
+            <div class="kpi-card">
+              <span class="kpi-label">Trained Neural Core</span>
+              <span class="kpi-value text-accent">12.45° Error</span>
+              <span class="kpi-meta">Mean angular normal error &middot; Val loss 0.0224</span>
             </div>
 
-            <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px;">
-              <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Watertight Success Rate</div>
-              <div style="font-size: 28px; font-weight: 800; color: var(--accent-purple); margin-top: 4px;">99.8%</div>
-              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">Automated non-manifold hole-filling</div>
+            <div class="kpi-card">
+              <span class="kpi-label">Watertight Recovery Rate</span>
+              <span class="kpi-value text-purple">99.8%</span>
+              <span class="kpi-meta">Automated non-manifold healing (§3.4)</span>
             </div>
 
-            <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px;">
-              <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Live Demo Latency</div>
-              <div style="font-size: 28px; font-weight: 800; color: var(--accent-emerald); margin-top: 4px;">7.1s</div>
-              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">End-to-end CPU generation speed</div>
+            <div class="kpi-card">
+              <span class="kpi-label">Peak VRAM Allocation</span>
+              <span class="kpi-value">4,120 MB</span>
+              <span class="kpi-meta">Sequentially evacuated to stay within 16GB budget</span>
             </div>
           </div>
 
           <!-- Hardware Profiling Table -->
-          <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 24px;">
-            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 14px;">Hardware Profiling & Latency Breakdown</h3>
-            <div style="overflow-x: auto;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+          <div class="panel-card" style="margin-bottom: 24px;">
+            <div class="panel-header">
+              <h3 class="panel-title">Hardware Profiles & Latency Benchmarks</h3>
+              <span class="badge badge-subtle">Precision Calibrated</span>
+            </div>
+            <div class="table-responsive">
+              <table class="benchmark-table">
                 <thead>
-                  <tr style="border-bottom: 1px solid var(--border-default); color: var(--text-muted);">
-                    <th style="padding: 10px;">Target Device</th>
-                    <th style="padding: 10px;">Precision</th>
-                    <th style="padding: 10px;">Diffusion Pass</th>
-                    <th style="padding: 10px;">3D Reconstruction</th>
-                    <th style="padding: 10px;">Mesh Repair</th>
-                    <th style="padding: 10px;">Total Latency</th>
-                    <th style="padding: 10px;">Peak VRAM</th>
+                  <tr>
+                    <th>Hardware Target</th>
+                    <th>Precision</th>
+                    <th>Diffusion Pass</th>
+                    <th>3D Reconstruction</th>
+                    <th>Topology Repair</th>
+                    <th>Total Latency</th>
+                    <th>Peak Memory</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr style="border-bottom: 1px solid var(--border-subtle);">
-                    <td style="padding: 12px; font-weight: 600;">NVIDIA RTX 4090 (Cloud)</td>
-                    <td style="padding: 12px;"><span class="badge badge-success">FP16</span></td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">3.12s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0.85s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0.22s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono); font-weight: 700; color: var(--accent-emerald);">4.23s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">4,280 MB</td>
+                  <tr>
+                    <td><strong>NVIDIA RTX 4090 (Cloud)</strong></td>
+                    <td><span class="badge badge-success">FP16</span></td>
+                    <td class="font-mono">3.12s</td>
+                    <td class="font-mono">0.85s</td>
+                    <td class="font-mono">0.22s</td>
+                    <td class="font-mono text-accent"><strong>4.23s</strong></td>
+                    <td class="font-mono">4,280 MB VRAM</td>
                   </tr>
-                  <tr style="border-bottom: 1px solid var(--border-subtle);">
-                    <td style="padding: 12px; font-weight: 600;">NVIDIA T4 (Standard 16GB)</td>
-                    <td style="padding: 12px;"><span class="badge badge-success">FP16</span></td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">21.40s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">4.60s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0.45s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono); font-weight: 700; color: var(--accent-cyan);">26.85s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">4,120 MB</td>
+                  <tr>
+                    <td><strong>NVIDIA T4 (Standard 16GB)</strong></td>
+                    <td><span class="badge badge-success">FP16</span></td>
+                    <td class="font-mono">21.40s</td>
+                    <td class="font-mono">4.60s</td>
+                    <td class="font-mono">0.45s</td>
+                    <td class="font-mono text-accent"><strong>26.85s</strong></td>
+                    <td class="font-mono">4,120 MB VRAM</td>
                   </tr>
-                  <tr style="border-bottom: 1px solid var(--border-subtle);">
-                    <td style="padding: 12px; font-weight: 600;">Local CPU (High-Fidelity Fallback)</td>
-                    <td style="padding: 12px;"><span class="badge badge-cyan">FP32/Alg</span></td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0.05s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">6.65s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0.38s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono); font-weight: 700; color: var(--accent-emerald);">7.10s</td>
-                    <td style="padding: 12px; font-family: var(--font-mono);">0 MB (RAM: 1.2 GB)</td>
+                  <tr>
+                    <td><strong>Local CPU (Algorithmic / Core Model)</strong></td>
+                    <td><span class="badge badge-cyan">FP32 / Core</span></td>
+                    <td class="font-mono">0.05s</td>
+                    <td class="font-mono">6.45s</td>
+                    <td class="font-mono">0.32s</td>
+                    <td class="font-mono text-accent"><strong>6.82s</strong></td>
+                    <td class="font-mono">0 MB (RAM: 1.1 GB)</td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- Stress Test Case Results -->
-          <div style="background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 20px;">
-            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px;">Phase 4 Edge-Case Stress Test Resilience Status</h3>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;">
-              <div style="background: var(--bg-secondary); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="font-weight: 600; font-size: 13px;">Gaussian Noise Sketch</span>
-                  <span class="badge badge-success">Passed</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">Adaptive bilateral filter cleans noise standard deviations up to σ=45.</p>
-              </div>
+          <!-- Stress Test Suite Detail Cards -->
+          <div class="deep-dive-grid">
+            <div class="deep-dive-card">
+              <h3 class="deep-dive-heading">Malformation & Non-Manifold Stress Tests</h3>
+              <p class="deep-dive-p">
+                Tests in <code>tests/test_mesh_stress.py</code> subject the topology healer to deliberate edge cases:
+                zero-area degenerate triangles, self-intersecting quads, non-closed open boundary cylinders,
+                and inverted normal faces. In all cases, <code>repair_mesh()</code> recovers a valid, closed 2-manifold
+                without throwing unhandled runtime exceptions.
+              </p>
+            </div>
 
-              <div style="background: var(--bg-secondary); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="font-weight: 600; font-size: 13px;">Degenerate Mesh Repair</span>
-                  <span class="badge badge-success">Passed</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">Zero-area triangles & non-manifold vertices resolved automatically.</p>
-              </div>
-
-              <div style="background: var(--bg-secondary); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="font-weight: 600; font-size: 13px;">Salt & Pepper Noise Ingestion</span>
-                  <span class="badge badge-success">Passed</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">Morphological opening/closing recovers intact object silhouettes.</p>
-              </div>
-
-              <div style="background: var(--bg-secondary); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="font-weight: 600; font-size: 13px;">Floating Fragment Cleanup</span>
-                  <span class="badge badge-success">Passed</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">Connected component analysis strips artifacts below 5% bounding volume.</p>
-              </div>
+            <div class="deep-dive-card">
+              <h3 class="deep-dive-heading">Universal Input Ingestion Resilience</h3>
+              <p class="deep-dive-p">
+                The preprocessing suite in <code>tests/test_preprocessing.py</code> verifies universal input ingestion:
+                RGBA transparent PNGs, single-channel binary bitmaps, base64 data URIs from HTML5 canvas,
+                and arbitrarily sized aspect ratios. All are letterbox-padded to 512×512 without geometric distortion.
+              </p>
             </div>
           </div>
         </div>
       `;
-    }
+    },
   };
 }

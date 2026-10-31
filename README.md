@@ -48,6 +48,23 @@ Sketch2Shape-AI/
 
 ---
 
+## 🚀 Running the Web Interface
+
+### 1. Launch the Original Web SPA Frontend & AI Backend
+
+Run the unified application server:
+
+\\ash
+python app.py
+# Or:
+python server.py
+\
+- **Web Studio (SPA)**: Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+- **Interactive REST API Docs**: Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) (OpenAPI / Swagger).
+- **Custom Port**: \python app.py --port 8080 --host 0.0.0.0- *(Legacy Gradio UI is still accessible via \python app.py --gradio\ on port 7860).*
+
+---
+
 ## ⚙️ Quick Start & Environment Configuration
 
 ### Option A — Conda (Recommended for CUDA acceleration)

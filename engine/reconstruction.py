@@ -84,6 +84,7 @@ class MeshReconstructor:
         self.config = config or ReconstructionConfig()
         self.device = self._resolve_device(self.config.device)
         self.model: Optional[Any] = None
+        self.trained_core_model: Optional[Any] = None
         self._is_mock = False
 
         self._initialize_backbone()
@@ -100,8 +101,26 @@ class MeshReconstructor:
     def _initialize_backbone(self) -> None:
         """
         Loads InstantMesh or Unique3D weights from engine/checkpoints/reconstruction_3d.
-        Falls back to high-resolution algorithmic geometry synthesis if weights are absent.
+        Falls back to trained Sketch2Shape core model if available, or high-resolution
+        algorithmic geometry synthesis if no weights are present.
         """
+        # 1. Try loading our trained Sketch2Shape core depth/normal predictor
+        core_checkpoint = CHECKPOINTS_DIR / "sketch2shape_core.pt"
+        if core_checkpoint.exists():
+            try:
+                from engine.train import load_trained_model
+                model_result = load_trained_model(str(core_checkpoint), device=self.device)
+                # load_trained_model returns (model, metadata_dict)
+                self.trained_core_model = model_result[0] if isinstance(model_result, tuple) else model_result
+                logger.info(
+                    f"Loaded trained Sketch2Shape core model from {core_checkpoint} "
+                    f"(device={self.device}). Neural depth/normal prediction enabled."
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to load trained core model ({exc}). Using algorithmic fallback.")
+                self.trained_core_model = None
+
+        # 2. Try loading InstantMesh large checkpoint for full neural reconstruction
         instantmesh_dir = CHECKPOINTS_DIR / "reconstruction_3d" / "instantmesh"
         weights_file = instantmesh_dir / "instant_mesh_large.ckpt"
 
@@ -131,6 +150,7 @@ class MeshReconstructor:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Estimates smooth depth field and surface normal map from a foreground image.
+        Uses the trained neural model when available, falling back to algorithmic inference.
 
         Parameters:
             image_rgb: (512, 512, 3) float32 in [0, 1] or uint8 in [0, 255]
@@ -143,6 +163,64 @@ class MeshReconstructor:
         if arr.max() > 1.0:
             arr /= 255.0
 
+        # Try trained neural model first
+        if self.trained_core_model is not None:
+            try:
+                return self._predict_with_trained_model(arr)
+            except Exception as exc:
+                logger.warning(f"Trained model inference failed ({exc}), falling back to algorithmic.")
+
+        # Algorithmic fallback: segment object from white background
+        return self._predict_algorithmic(arr)
+
+    def _predict_with_trained_model(
+        self,
+        arr: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Uses the trained Sketch2Shape core neural model for depth/normal prediction."""
+        import torch
+
+        H, W = arr.shape[:2]
+        # Resize to 128x128 (the model's training resolution)
+        from PIL import Image as PILImage
+        pil = PILImage.fromarray((arr * 255).astype(np.uint8))
+        pil_resized = pil.resize((128, 128), PILImage.Resampling.BILINEAR)
+        input_np = np.array(pil_resized, dtype=np.float32) / 255.0
+
+        input_tensor = torch.from_numpy(input_np).permute(2, 0, 1).unsqueeze(0)
+        input_tensor = input_tensor.to(self.device)
+
+        self.trained_core_model.eval()
+        with torch.no_grad():
+            outputs = self.trained_core_model(input_tensor)
+
+        # Model returns dict with keys: 'depth' (1,1,H,W), 'normal' (1,3,H,W), 'mask' (1,1,H,W)
+        depth_pred = outputs['depth']
+        normal_pred = outputs['normal']
+
+        # Convert to numpy and resize back to original resolution
+        depth_small = depth_pred.squeeze().cpu().numpy()
+        normal_small = normal_pred.squeeze().permute(1, 2, 0).cpu().numpy()
+
+        # Upsample to original H x W
+        from scipy.ndimage import zoom
+        scale_h, scale_w = H / 128.0, W / 128.0
+        depth_map = zoom(depth_small, (scale_h, scale_w), order=1).astype(np.float32)
+        normal_map = zoom(normal_small, (scale_h, scale_w, 1), order=1).astype(np.float32)
+
+        # Normalize
+        d_min, d_max = depth_map.min(), depth_map.max()
+        depth_map = (depth_map - d_min) / (d_max - d_min + 1e-6)
+        normal_map = np.clip(normal_map * 0.5 + 0.5, 0.0, 1.0)
+
+        logger.info("Neural depth/normal prediction completed via trained core model.")
+        return depth_map, normal_map
+
+    def _predict_algorithmic(
+        self,
+        arr: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Algorithmic depth/normal estimation via distance transform and gradient analysis."""
         # Segment object from white background
         luminance = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
         fg_mask = luminance < 0.96
@@ -342,6 +420,9 @@ class MeshReconstructor:
         if self.model is not None:
             del self.model
             self.model = None
+        if self.trained_core_model is not None:
+            del self.trained_core_model
+            self.trained_core_model = None
         gc.collect()
         try:
             import torch
