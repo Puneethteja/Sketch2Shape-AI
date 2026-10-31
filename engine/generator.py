@@ -94,6 +94,12 @@ class SketchDiffusionGenerator:
             local_sd = CHECKPOINTS_DIR / "stable_diffusion"
             local_cn = CHECKPOINTS_DIR / "controlnet" / "scribble"
 
+            if not self.device.startswith("cuda") and not ((local_sd / "model_index.json").exists() and (local_cn / "config.json").exists()):
+                logger.info("CUDA GPU or local checkpoints not detected on host. Engaging high-fidelity procedural generation engine.")
+                self.pipeline = None
+                self._is_mock = True
+                return
+
             sd_id = str(local_sd) if (local_sd / "model_index.json").exists() else self.config.sd_model_id
             cn_id = str(local_cn) if (local_cn / "config.json").exists() else self.config.controlnet_model_id
 

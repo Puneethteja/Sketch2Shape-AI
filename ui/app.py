@@ -447,13 +447,63 @@ class GenerationOutput(tuple):
             pass
         return super().__iter__()
 
+def _extract_image_from_source(source: Any) -> Optional[Union[np.ndarray, str, Image.Image]]:
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        comp = source.get("composite")
+        if comp is not None:
+            extracted = _extract_image_from_source(comp)
+            if extracted is not None and not _is_blank_sketch(extracted):
+                return extracted
+        layers = source.get("layers", [])
+        if layers:
+            for layer in reversed(layers):
+                if layer is not None:
+                    extracted = _extract_image_from_source(layer)
+                    if extracted is not None and not _is_blank_sketch(extracted):
+                        return extracted
+        bg = source.get("background")
+        if bg is not None:
+            return _extract_image_from_source(bg)
+        return None
+    if isinstance(source, Image.Image):
+        return source
+    if isinstance(source, np.ndarray):
+        if source.size == 0:
+            return None
+        if source.ndim == 3 and source.shape[2] == 4:
+            pil_rgba = Image.fromarray(source.astype(np.uint8), mode="RGBA")
+            white_bg = Image.new("RGB", pil_rgba.size, (255, 255, 255))
+            white_bg.paste(pil_rgba, mask=pil_rgba.split()[3])
+            return np.array(white_bg)
+        return source
+    if isinstance(source, str):
+        if len(source.strip()) == 0:
+            return None
+        return source
+    if hasattr(source, "name") and isinstance(source.name, str):
+        return source.name
+    return None
+
 def _is_blank_sketch(source: Any) -> bool:
     if source is None:
         return True
-    if isinstance(source, np.ndarray) and source.size == 0:
-        return True
+    if isinstance(source, np.ndarray):
+        if source.size == 0:
+            return True
+        if source.ndim == 3 and source.shape[2] == 4 and np.all(source[..., 3] == 0):
+            return True
+        return False
     if isinstance(source, str) and len(source.strip()) == 0:
         return True
+    if isinstance(source, dict):
+        comp = source.get("composite")
+        layers = source.get("layers", [])
+        if comp is None and not layers:
+            return True
+        if comp is not None:
+            return _is_blank_sketch(comp)
     return False
 
 def _validate_uploaded_file(path_str: Optional[str]) -> Tuple[bool, str]:
@@ -475,25 +525,38 @@ def _validate_uploaded_file(path_str: Optional[str]) -> Tuple[bool, str]:
     return True, ""
 
 def _resolve_input_source(
-    canvas_image: Optional[np.ndarray] = None,
-    uploaded_file: Optional[str] = None,
+    canvas_image: Optional[Any] = None,
+    uploaded_file: Optional[Any] = None,
     canvas_data_url: Optional[str] = None,
-) -> Optional[Union[np.ndarray, str]]:
-    if canvas_image is not None:
-        return canvas_image
+) -> Optional[Union[np.ndarray, str, Image.Image]]:
     if uploaded_file is not None:
-        return uploaded_file
+        file_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+        if len(str(file_path).strip()) > 0 and Path(file_path).exists():
+            return str(file_path)
+
+    extracted_canvas = _extract_image_from_source(canvas_image)
+    if extracted_canvas is not None and not _is_blank_sketch(extracted_canvas):
+        return extracted_canvas
+
     if canvas_data_url is not None and len(canvas_data_url.strip()) > 0:
         return canvas_data_url
+
+    if extracted_canvas is not None:
+        return extracted_canvas
+
+    if canvas_image is not None:
+        return canvas_image
+
     return None
 
 def _run_preprocessing(
-    canvas_image: Optional[np.ndarray] = None,
-    uploaded_file: Optional[str] = None,
+    canvas_image: Optional[Any] = None,
+    uploaded_file: Optional[Any] = None,
     canvas_data_url: Optional[str] = None,
 ) -> Tuple[Optional[Image.Image], str]:
     if uploaded_file is not None:
-        valid, err_msg = _validate_uploaded_file(uploaded_file)
+        up_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+        valid, err_msg = _validate_uploaded_file(up_path)
         if not valid:
             gr.Warning(f"Invalid file upload: {err_msg}")
             return None, f"⚠ Invalid file upload: {err_msg}"
@@ -511,8 +574,12 @@ def _run_preprocessing(
         gr.Warning("Preprocessing engine unavailable in current environment.")
         return None, "⚠  Preprocessing engine unavailable. Ensure engine/preprocessing.py is importable."
 
+    clean_source = _extract_image_from_source(source)
+    if clean_source is None:
+        clean_source = source
+
     try:
-        result_np: np.ndarray = preprocess(source, return_tensor=False)
+        result_np: np.ndarray = preprocess(clean_source, return_tensor=False)
         preview = Image.fromarray(result_np)
         return preview, "✔  Preprocessing complete. Ready for AI generation."
     except Exception as exc:
@@ -521,19 +588,24 @@ def _run_preprocessing(
 
 def _run_ai_generation(
     prompt: str = "",
-    controlnet_scale: float = 0.85,
-    num_inference_steps: int = 30,
-    seed: int = -1,
-    canvas_image: Optional[np.ndarray] = None,
-    uploaded_file: Optional[str] = None,
+    controlnet_scale: Optional[float] = 0.85,
+    num_inference_steps: Optional[int] = 30,
+    seed: Optional[int] = -1,
+    canvas_image: Optional[Any] = None,
+    uploaded_file: Optional[Any] = None,
     canvas_data_url: Optional[str] = None,
     preprocessed_preview: Optional[Image.Image] = None,
     progress: gr.Progress = gr.Progress(track_tqdm=True),
 ) -> GenerationOutput:
     global _LAST_GENERATED_MESH
 
+    scale = float(0.85 if controlnet_scale is None else controlnet_scale)
+    steps = int(20 if num_inference_steps is None else num_inference_steps)
+    seed_val = int(-1 if seed is None else seed)
+
     if uploaded_file is not None:
-        valid, err_msg = _validate_uploaded_file(uploaded_file)
+        up_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+        valid, err_msg = _validate_uploaded_file(up_path)
         if not valid:
             gr.Warning(f"Invalid file upload: {err_msg}")
             return GenerationOutput(None, None, f"⚠ Invalid sketch upload: {err_msg}", "")
@@ -556,6 +628,10 @@ def _run_ai_generation(
         gr.Warning("AI Pipeline backend unavailable.")
         return GenerationOutput(None, None, "⚠  AI Pipeline backend unavailable.", "")
 
+    clean_source = _extract_image_from_source(source)
+    if clean_source is None:
+        clean_source = source
+
     try:
         progress(0.1, desc="Ingesting & preprocessing sketch...")
         pipeline = Sketch2ShapePipeline()
@@ -566,17 +642,17 @@ def _run_ai_generation(
 
         progress(0.35, desc="Running diffusion generator...")
         result: GenerationResult = pipeline.run(
-            sketch_source=source,
-            prompt=prompt,
-            controlnet_scale=float(controlnet_scale),
-            num_inference_steps=int(num_inference_steps),
-            seed=int(seed),
+            sketch_source=clean_source,
+            prompt=prompt or "",
+            controlnet_scale=scale,
+            num_inference_steps=steps,
+            seed=seed_val,
             export_path=export_glb_path,
             export_format="glb",
         )
 
         progress(0.85, desc="Reconstructing 3D watertight mesh...")
-        from utils.mesh_utils import repair_mesh
+        from utils.mesh_utils import export_mesh, repair_mesh
         validated_mesh = repair_mesh(
             result.mesh,
             strip_floating=True,
@@ -586,6 +662,8 @@ def _run_ai_generation(
         _LAST_GENERATED_MESH = validated_mesh
         _SESSION["current_mesh"] = validated_mesh
         _SESSION["last_result"] = result
+
+        export_mesh(validated_mesh, export_glb_path, export_format="glb")
 
         depth_preview = None
         if hasattr(result, "depth_image") and result.depth_image is not None:
@@ -605,7 +683,7 @@ def _run_ai_generation(
             f"Faces: {len(validated_mesh.faces):,} | "
             f"Vertices: {len(validated_mesh.vertices):,}"
         )
-        glb_url = f"/file={export_glb_path.as_posix()}"
+        glb_url = f"/file={export_glb_path.resolve().as_posix()}"
 
         gr.Info("3D Asset generated successfully.")
         return GenerationOutput(depth_preview, str(export_glb_path), status_msg, glb_url)
@@ -662,7 +740,7 @@ def _run_mesh_export(export_format: str) -> Tuple[Optional[str], str]:
         gr.Info("Exported GLB asset.")
         return str(glb_file), f"[OK] Exported {glb_file.name}"
 
-    gr.Info(f"No active mesh in session. Generate a 3D asset first.")
+    gr.Info("No active mesh in session. Generate a 3D asset first.")
     return None, f"⏳  No mesh in session. Generate a 3D asset first before exporting to {export_format}."
 
 def _clear_session() -> Tuple:
@@ -748,29 +826,23 @@ def build_ui() -> gr.Blocks:
         with gr.Row(equal_height=False):
             with gr.Column(scale=1, min_width=380):
                 gr.HTML('<p class="panel-header">Sketch Input</p>')
-                gr.HTML(_HTML5_CANVAS_HTML, elem_id="html5-canvas-root")
 
-                with gr.Accordion(
-                    label="Alternative / Fallback Sketchpad",
-                    open=False,
-                    elem_classes=["compact-accordion"],
-                ):
-                    canvas = gr.Sketchpad(
-                        label="Standard Drawing Canvas",
-                        type="numpy",
-                        image_mode="RGBA",
-                        elem_id="sketch-canvas",
-                        height=260,
-                    )
-
-                gr.HTML('<div style="margin: 6px 0 4px; font-size: 11px; color: var(--body-text-color-subdued); text-align: center;">— or upload sketch / photo —</div>')
-
-                file_upload = gr.File(
-                    label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
-                    file_types=SUPPORTED_UPLOAD_EXTENSIONS,
-                    file_count="single",
-                    elem_id="file-uploader",
-                )
+                with gr.Tabs():
+                    with gr.Tab("✏️ Draw on Canvas"):
+                        canvas = gr.Sketchpad(
+                            label="Interactive Sketch Canvas",
+                            type="numpy",
+                            image_mode="RGBA",
+                            elem_id="sketch-canvas",
+                            height=340,
+                        )
+                    with gr.Tab("📁 Upload Sketch File"):
+                        file_upload = gr.File(
+                            label="Drag & Drop Sketch (.png, .jpg, .jpeg)",
+                            file_types=SUPPORTED_UPLOAD_EXTENSIONS,
+                            file_count="single",
+                            elem_id="file-uploader",
+                        )
 
                 prompt_input = gr.Textbox(
                     label="Material / Style Prompt (Optional)",
@@ -782,7 +854,7 @@ def build_ui() -> gr.Blocks:
 
                 with gr.Accordion(
                     label="Pipeline Parameters",
-                    open=False,
+                    open=True,
                     elem_classes=["compact-accordion"],
                 ):
                     controlnet_scale = gr.Slider(
@@ -827,22 +899,27 @@ def build_ui() -> gr.Blocks:
 
             with gr.Column(scale=1, min_width=380):
                 gr.HTML('<p class="panel-header">3D WebGL Asset Preview</p>')
-                gr.HTML(_WEBGL_VIEWER_HTML, elem_id="webgl-viewport")
 
-                preprocessed_view = gr.Image(
-                    label="Preprocessed / Lineart Preview",
-                    type="pil",
-                    interactive=False,
-                                        height=180,
+                model_3d_view = gr.Model3D(
+                    label="Interactive 3D WebGL Model Viewer (Orbit / Zoom / Pan)",
+                    height=340,
+                    elem_id="s2s-model-3d",
                 )
 
-                depth_view = gr.Image(
-                    label="Depth / Normal Map [AI Engine Output]",
-                    type="pil",
-                    interactive=False,
-                                        height=180,
-                    visible=True,
-                )
+                with gr.Row():
+                    preprocessed_view = gr.Image(
+                        label="Preprocessed / Lineart Preview",
+                        type="pil",
+                        interactive=False,
+                        height=160,
+                    )
+                    depth_view = gr.Image(
+                        label="Depth / Normal Map [AI Engine Output]",
+                        type="pil",
+                        interactive=False,
+                        height=160,
+                        visible=True,
+                    )
 
                 gr.HTML('<p class="panel-header" style="margin-top: 8px;">Mesh Export & Downloads</p>')
 
@@ -894,7 +971,12 @@ def build_ui() -> gr.Blocks:
                 preprocessed_view,
             ],
             outputs=[depth_view, export_file, status_bar, glb_url_holder],
-            js="() => { if (window.s2sViewerInstance) { window.s2sViewerInstance.showLoading('AI Engine generating 3D asset...', 20); } }",
+        )
+
+        export_file.change(
+            fn=lambda f: f.name if (f and hasattr(f, "name")) else (str(f) if f else None),
+            inputs=[export_file],
+            outputs=[model_3d_view],
         )
 
         btn_export.click(
@@ -915,7 +997,6 @@ def build_ui() -> gr.Blocks:
                 export_file,
                 status_bar,
             ],
-            js="() => { if (window.s2sClearCanvas) window.s2sClearCanvas(); }",
         )
 
     return app
