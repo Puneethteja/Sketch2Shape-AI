@@ -95,7 +95,9 @@
                     if (this.options.initialModel) {
                         this.loadGLB(this.options.initialModel);
                     } else {
-                        this.loadParametricDemo("vase");
+                        if (this.dom.emptyStage) {
+                            this.dom.emptyStage.style.display = "flex";
+                        }
                     }
                 })
                 .catch((err) => {
@@ -156,6 +158,31 @@
             this.dom.spinnerBar = spinnerOverlay.querySelector("#s2s-spinner-bar");
             this.dom.spinnerPercent = spinnerOverlay.querySelector("#s2s-spinner-percent");
             this.dom.spinnerText = spinnerOverlay.querySelector("#s2s-spinner-text");
+
+            const emptyStage = document.createElement("div");
+            emptyStage.className = "s2s-empty-stage";
+            emptyStage.id = "s2s-empty-stage";
+            emptyStage.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(circle at center, rgba(30, 41, 59, 0.45) 0%, rgba(9, 13, 22, 0.96) 100%);color:" + THEME.textMuted + ";z-index:20;user-select:none;padding:20px;text-align:center;";
+            emptyStage.innerHTML = '<div style="width:52px;height:52px;border-radius:12px;background:' + THEME.surfaceElevated + ';border:1px solid ' + THEME.border + ';display:flex;align-items:center;justify-content:center;color:' + THEME.accent + ';">' +
+                '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">' +
+                '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+                '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/>' +
+                '<line x1="12" y1="22.08" x2="12" y2="12"/>' +
+                '</svg>' +
+                '</div>' +
+                '<div style="font-size:13px;font-weight:600;color:' + THEME.textPrimary + ';letter-spacing:0.02em;">Interactive 3D Stage Ready</div>' +
+                '<div style="font-size:11px;color:' + THEME.textDark + ';max-width:270px;line-height:1.4;">Draw on the sketch canvas and click <b>Generate 3D Asset</b>, or explore a demo model.</div>' +
+                '<div style="display:flex;gap:6px;margin-top:4px;">' +
+                '<button type="button" class="s2s-btn" id="s2s-load-demo-btn" style="background:#0284c7;color:#ffffff;border-color:#38bdf8;">Explore Demo Model</button>' +
+                '</div>';
+            viewport.appendChild(emptyStage);
+            this.dom.emptyStage = emptyStage;
+            const loadDemoBtn = emptyStage.querySelector("#s2s-load-demo-btn");
+            if (loadDemoBtn) {
+                loadDemoBtn.addEventListener("click", () => {
+                    this.loadParametricDemo("vase");
+                });
+            }
 
             if (!document.getElementById("s2s-viewer-styles")) {
                 const styleEl = document.createElement("style");
@@ -499,9 +526,11 @@
             this.activeBlobUrl = null;
             this.lastLoadedUrl = null;
             this.resetCamera();
-            this.loadParametricDemo("vase");
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "flex";
+            }
             if (this.dom.statBadge) {
-                this.dom.statBadge.textContent = "Asset Reset";
+                this.dom.statBadge.textContent = "Stage Ready";
                 this.dom.statBadge.style.color = THEME.textDark;
             }
         }
@@ -522,6 +551,9 @@
 
         showLoading(message = "Loading 3D asset...", progress = 0) {
             this.isLoading = true;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (this.dom.spinnerOverlay) {
                 this.dom.spinnerOverlay.style.display = "flex";
                 if (this.dom.spinnerText) this.dom.spinnerText.textContent = message;
@@ -553,6 +585,9 @@
 
         loadGLB(source, filename = "sketch2shape_generated.glb") {
             const THREE = window.THREE;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (!THREE || !THREE.GLTFLoader) {
                 console.warn("[Sketch2ShapeViewer] GLTFLoader unavailable.");
                 return;
@@ -658,6 +693,9 @@
 
         loadParametricDemo(type = "vase") {
             const THREE = window.THREE;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (!THREE) return;
 
             this._clearModelGroup();
