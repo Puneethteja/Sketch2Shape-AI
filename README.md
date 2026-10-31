@@ -9,22 +9,25 @@
 
 ```
 Sketch2Shape-AI/
-├── engine/                   # Core ML & CV pipeline
+├── docs/                         # Technical documentation
+│   ├── technical_architecture.md # System dataflow, algorithmic specs, integration contracts
+│   └── living_log.md             # Chronological development milestone log
+├── engine/                       # Core ML & CV pipeline
 │   ├── __init__.py
-│   └── preprocessing.py      # Ingest, normalize, letterbox resize, bilateral filter, lineart
-├── ui/                       # Front-end / drawing canvas interface
+│   └── preprocessing.py          # Ingest, normalize, letterbox resize, bilateral filter, lineart
+├── ui/                           # Front-end / drawing canvas interface
+│   └── app.py                    # Gradio dual-viewport UI skeleton (Laxmi)
+├── outputs/                      # Generated images & 3-D assets
 │   └── .gitkeep
-├── outputs/                  # Generated images & 3-D assets
-│   └── .gitkeep
-├── tests/                    # pytest test suite
+├── tests/                        # pytest test suite
 │   ├── __init__.py
-│   ├── test_preprocessing.py # Ingest, color normalisation, resize, filter, lineart
-│   └── test_image_utils.py   # Image I/O and visualization helpers
-├── utils/                    # Shared helper utilities
+│   ├── test_preprocessing.py     # Ingest, color normalisation, resize, filter, lineart
+│   └── test_image_utils.py       # Image I/O and visualization helpers
+├── utils/                        # Shared helper utilities
 │   ├── __init__.py
-│   └── image_utils.py        # I/O, PIL conversion, side-by-side display, mask overlay
-├── environment.yml           # Conda environment spec (CUDA-enabled PyTorch)
-├── requirements.txt          # pip requirements specification
+│   └── image_utils.py            # I/O, PIL conversion, side-by-side display, mask overlay
+├── environment.yml               # Conda environment spec (CUDA-enabled PyTorch)
+├── requirements.txt              # pip requirements specification
 └── .gitignore
 ```
 
@@ -112,6 +115,7 @@ All 49 unit and integration tests validate:
 | Role | Name |
 |---|---|
 | Lead Data & Infrastructure Engineer | Puneeth |
+| Lead Frontend, WebGL & Technical Documentation | Laxmi |
 
 ---
 
