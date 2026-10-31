@@ -1,7 +1,7 @@
 """
 engine/pipeline.py
 Unified end-to-end inference pipeline orchestrator with strict FP16 execution,
-StageLinker tensor handoff, and automated mesh validation interceptor.
+StageLinker tensor handoff, automated VRAM clearing, and sequential CPU offloading.
 """
 
 from __future__ import annotations
@@ -32,8 +32,21 @@ if str(ROOT_DIR) not in sys.path:
 from engine.generator import DiffusionConfig, SketchDiffusionGenerator
 from engine.linker import StageHandoff, StageLinker
 from engine.reconstruction import MeshReconstructor, ReconstructionConfig
-from utils.mesh_utils import export_mesh, repair_mesh
-from utils.segmentation import isolate_and_center
+
+try:
+    from utils.mesh_utils import export_mesh, repair_mesh
+except Exception:
+    from engine.mesh_utils import repair_mesh as _engine_repair_mesh
+    def repair_mesh(mesh: Any, **kwargs: Any) -> Any:
+        return _engine_repair_mesh(mesh, verbose=kwargs.get("verbose", False))
+    def export_mesh(mesh: Any, path: Union[str, Path], export_format: str = "obj") -> str:
+        mesh.export(str(path), file_type=export_format)
+        return str(path)
+
+try:
+    from utils.segmentation import isolate_and_center
+except Exception:
+    isolate_and_center = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -136,13 +149,43 @@ class Sketch2ShapePipeline:
         except Exception:
             pass
 
+    def _evacuate_vram(self, model: Optional[Any] = None) -> None:
+        if model is not None:
+            if hasattr(model, "pipeline") and model.pipeline is not None:
+                try:
+                    model.pipeline.to("cpu")
+                except Exception:
+                    pass
+            if hasattr(model, "model") and model.model is not None:
+                try:
+                    if hasattr(model.model, "to"):
+                        model.model.to("cpu")
+                except Exception:
+                    pass
+            if hasattr(model, "unload"):
+                try:
+                    model.unload()
+                except Exception:
+                    pass
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
+                active_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+                logger.info(f"[VRAM Reset] Cache cleared and offloaded to CPU. Active VRAM: {active_mb:.1f} MB")
+        except Exception:
+            pass
+
     def run(
         self,
         sketch_source: Union[str, Path, Image.Image, np.ndarray, bytes],
         prompt: Optional[str] = None,
-        controlnet_scale: float = 0.85,
-        num_inference_steps: int = 30,
-        guidance_scale: float = 7.5,
+        controlnet_scale: float = 0.80,
+        num_inference_steps: int = 20,
+        guidance_scale: float = 7.0,
         seed: int = -1,
         export_path: Optional[Union[str, Path]] = None,
         export_format: str = "obj",
@@ -199,23 +242,15 @@ class Sketch2ShapePipeline:
         )
 
         logger.info("[Sequential Handover] Evacuating Stage 2 model weights from VRAM...")
-        generator.unload()
+        self._evacuate_vram(generator)
         del generator
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                vram_curr = torch.cuda.memory_allocated() / (1024 ** 2)
-                logger.info(f"[VRAM Reset] CUDA cache cleared. Active VRAM: {vram_curr:.1f} MB")
-        except Exception:
-            pass
 
-        try:
-            segmented_gen_image = isolate_and_center(gen_image, neutral_background=True)
-            handoff.generated_image = segmented_gen_image
-        except Exception as exc:
-            logger.warning(f"Foreground segmentation fallback: {exc}")
+        if isolate_and_center is not None:
+            try:
+                segmented_gen_image = isolate_and_center(gen_image, neutral_background=True)
+                handoff.generated_image = segmented_gen_image
+            except Exception as exc:
+                logger.warning(f"Foreground segmentation fallback: {exc}")
 
         stage3_t0 = time.perf_counter()
         logger.info("[Stage 3] Initializing 3D Reconstruction Backbone in FP16...")
@@ -234,9 +269,9 @@ class Sketch2ShapePipeline:
             f"Faces: {len(raw_mesh.faces)}"
         )
 
-        reconstructor.unload()
+        logger.info("[Sequential Handover] Evacuating Stage 3 model weights from VRAM...")
+        self._evacuate_vram(reconstructor)
         del reconstructor
-        gc.collect()
 
         logger.info("[Stage 4] Intercepting mesh with non-manifold repair sequence...")
         try:
@@ -331,8 +366,8 @@ def main() -> int:
     )
     parser.add_argument("input", type=str, help="Path to input sketch image.")
     parser.add_argument("--prompt", type=str, default="", help="Optional text description for styling and materials.")
-    parser.add_argument("--scale", type=float, default=0.85, help="ControlNet conditioning scale (0.0 - 2.0). Default: 0.85.")
-    parser.add_argument("--steps", type=int, default=30, help="Number of diffusion inference steps. Default: 30.")
+    parser.add_argument("--scale", type=float, default=0.80, help="ControlNet conditioning scale (0.0 - 2.0). Default: 0.80.")
+    parser.add_argument("--steps", type=int, default=20, help="Number of diffusion inference steps. Default: 20.")
     parser.add_argument("--seed", type=int, default=-1, help="RNG seed (-1 for random).")
     parser.add_argument("--output", type=str, default="outputs/generated_mesh.obj", help="Path to save reconstructed mesh.")
     parser.add_argument("--format", type=str, default="obj", choices=["obj", "glb", "stl", "ply"], help="Mesh export format.")
@@ -350,13 +385,22 @@ def main() -> int:
         export_format=args.format,
     )
 
+    t = result.stage_timing
     print("\n" + "=" * 60)
-    print(" [Sketch2Shape AI] Generation Finished")
-    print(f"  * Seed Used       : {result.seed_used}")
-    print(f"  * Total Latency   : {result.latency_seconds:.2f}s")
-    print(f"  * Peak VRAM       : {result.vram_peak_mb:.1f} MB")
-    print(f"  * Output Mesh     : {args.output}")
-    print(f"  * Watertight Hull : {result.mesh.is_watertight}")
+    print(" [Sketch2Shape AI] Pipeline Finished")
+    print(f"  * Seed Used           : {result.seed_used}")
+    print(f"  * Total Latency       : {result.latency_seconds:.2f}s")
+    if t:
+        print(f"    - Preprocess        : {t.preprocess:.3f}s")
+        print(f"    - Generation        : {t.generation:.3f}s")
+        print(f"    - Linker Extraction : {t.linker_extraction:.4f}s")
+        print(f"    - Reconstruction    : {t.reconstruction:.3f}s")
+        if t.export > 0:
+            print(f"    - Export            : {t.export:.3f}s")
+    print(f"  * Peak VRAM           : {result.vram_peak_mb:.1f} MB")
+    print(f"  * Output Mesh         : {args.output}")
+    print(f"  * Vertices / Faces    : {result.vertex_count} / {result.face_count}")
+    print(f"  * Watertight Hull     : {result.is_watertight}")
     print("=" * 60 + "\n")
     return 0
 
