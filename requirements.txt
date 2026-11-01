@@ -1,2 +1,10 @@
-# Default install: small API runtime for hosted TokenHub/Meshy providers.
--r requirements-backend.txt
+# Vercel-compatible hosted API requirements. Keep this file self-contained;
+# Vercel's requirements parser does not support nested -r includes.
+fastapi>=0.115,<1
+python-multipart>=0.0.9,<1
+uvicorn>=0.30,<1
+numpy>=1.24,<2
+Pillow>=10,<14
+opencv-python-headless>=4.8,<5
+trimesh>=4,<6
+scipy>=1.11,<2
