@@ -48,6 +48,24 @@ from engine.mesh_utils import (
     repair_mesh,
     trimesh,
 )
+from engine.geometry_engine import UniversalGeometryEngine
+
+try:
+    from engine.multiview import MultiViewSynthesizer, MultiViewResult
+    _MULTIVIEW_AVAILABLE = True
+except ImportError:
+    _MULTIVIEW_AVAILABLE = False
+    MultiViewSynthesizer = None
+    MultiViewResult = None
+
+try:
+    from engine.texture import TextureProjector
+    _TEXTURE_AVAILABLE = True
+except ImportError:
+    _TEXTURE_AVAILABLE = False
+    TextureProjector = None
+
+import math
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +103,22 @@ class MeshReconstructor:
         self.device = self._resolve_device(self.config.device)
         self.model: Optional[Any] = None
         self._is_mock = False
+
+        self._multiview_synth = None
+        if _MULTIVIEW_AVAILABLE:
+            try:
+                self._multiview_synth = MultiViewSynthesizer()
+                logger.info("MultiViewSynthesizer initialized (6 canonical camera angles)")
+            except Exception as exc:
+                logger.warning(f"MultiViewSynthesizer init skipped: {exc}")
+
+        self._texture_projector = None
+        if _TEXTURE_AVAILABLE:
+            try:
+                self._texture_projector = TextureProjector()
+                logger.info("TextureProjector initialized (UV texture mapping & color preservation pass active)")
+            except Exception as exc:
+                logger.warning(f"TextureProjector init skipped: {exc}")
 
         self._initialize_backbone()
 
@@ -181,6 +215,8 @@ class MeshReconstructor:
         self,
         image_input: Union[Image.Image, np.ndarray, Path, str],
         target_faces: Optional[int] = None,
+        prompt: str = "",
+        sketch_input: Optional[Any] = None,
     ) -> Tuple[Any, np.ndarray, np.ndarray, float]:
         """
         End-to-end 3D reconstruction function ingesting a preprocessed foreground image.
@@ -210,13 +246,33 @@ class MeshReconstructor:
         # 1. Infer Depth and Normal Maps
         depth_map, normal_map = self.predict_depth_and_normals(img_np)
 
-        # 2. Extract 3D Surface Mesh
+        # 2. Multi-View Diffusion Synthesis (Stage 2.5)
+        mv_result = None
+        if self._multiview_synth is not None:
+            try:
+                mv_result = self._multiview_synth.synthesize(
+                    image_input=pil_img,
+                    prompt=prompt,
+                    seed=42,
+                )
+                logger.info(
+                    f"[Stage 2.5] Multi-View Synthesis: {len(mv_result.views)} views, "
+                    f"grid size {mv_result.composite_grid.size}"
+                )
+            except Exception as exc:
+                logger.warning(f"Multi-view synthesis skipped: {exc}")
+
+        # 3. Extract 3D Surface Mesh
         if not self._is_mock and self.model is not None:
-            # Neural InstantMesh / LRM triplane reconstruction pass
             raw_mesh = self._run_neural_reconstruction(img_np)
         else:
-            # Algorithmic volumetric isosurface / Poisson synthesis
-            raw_mesh = self._synthesize_mesh_from_depth(img_np, depth_map)
+            raw_mesh = self._synthesize_mesh_from_depth(
+                img_np,
+                depth_map,
+                prompt=prompt,
+                sketch_input=sketch_input if sketch_input is not None else pil_img,
+                multi_view_result=mv_result,
+            )
 
         # 3. Apply Deterministic Watertight Repair Sequence (§3.4)
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
@@ -237,11 +293,202 @@ class MeshReconstructor:
         self,
         image_rgb: np.ndarray,
         depth_map: np.ndarray,
+        prompt: str = "",
+        sketch_input: Optional[Any] = None,
+        multi_view_result: Optional[Any] = None,
     ) -> Any:
-        """
-        Reconstructs a full bilateral 3D closed shell from depth map and image textures.
-        Front-facing depth and mirrored back-facing hull are seamlessly fused into a manifold.
-        """
+        if multi_view_result is not None and hasattr(multi_view_result, "views"):
+            try:
+                triplane_mesh = self._build_triplane_mesh(multi_view_result, prompt=prompt)
+                if triplane_mesh is not None:
+                    logger.info(
+                        f"[Triplane] Multi-view mesh: {len(triplane_mesh.vertices)} vertices, "
+                        f"{len(triplane_mesh.faces)} faces"
+                    )
+                    return triplane_mesh
+            except Exception as exc:
+                logger.warning(f"Triplane mesh build failed ({exc}), falling back to geometry engine")
+
+        geom_mesh = UniversalGeometryEngine.generate(
+            image_input=image_rgb,
+            depth_map=depth_map,
+            prompt=prompt,
+            sketch_input=sketch_input,
+        )
+        if self._texture_projector is not None and hasattr(geom_mesh, "vertices") and len(geom_mesh.vertices) > 0:
+            try:
+                views_to_use = getattr(multi_view_result, "views", [image_rgb]) if multi_view_result else [image_rgb]
+                masks_to_use = getattr(multi_view_result, "foreground_masks", None) if multi_view_result else None
+                tex_res = self._texture_projector.project_texture_pass(
+                    vertices=geom_mesh.vertices,
+                    faces=geom_mesh.faces,
+                    reference_image=image_rgb,
+                    multiview_views=views_to_use,
+                    multiview_masks=masks_to_use,
+                )
+                geom_mesh.vertex_colors = tex_res.vertex_colors
+                geom_mesh.uv_coordinates = tex_res.uv_coordinates
+                geom_mesh.texture_atlas = tex_res.texture_atlas
+            except Exception as exc:
+                logger.warning(f"Texture projection fallback warning: {exc}")
+        return geom_mesh
+
+    def _build_triplane_mesh(
+        self,
+        mv_result: Any,
+        prompt: str = "",
+    ) -> Any:
+        views = mv_result.views
+        masks = mv_result.foreground_masks
+        front_img = views[0]
+        front_mask = masks[0]
+
+        y_idxs, x_idxs = np.where(front_mask)
+        if len(y_idxs) < 20:
+            return None
+
+        ymin, ymax = int(y_idxs.min()), int(y_idxs.max())
+        xmin, xmax = int(x_idxs.min()), int(x_idxs.max())
+        cx = (xmin + xmax) / 2.0
+        height = max(10, ymax - ymin)
+        img_size = front_img.shape[1]
+
+        n_rings = 64
+        n_sectors = 64
+        thetas = np.linspace(0, 2 * np.pi, n_sectors, endpoint=False)
+        sin_t = np.sin(thetas)
+        cos_t = np.cos(thetas)
+
+        y_samples = np.linspace(ymin, ymax, n_rings).astype(np.int32)
+
+        rx_profile = []
+        for y in y_samples:
+            xs = np.where(front_mask[y])[0]
+            if len(xs) > 0:
+                rx = (xs.max() - xs.min()) / 2.0
+            else:
+                rx = 5.0
+            rx_profile.append(rx)
+        rx_profile = np.array(rx_profile, dtype=np.float32)
+
+        side_rx = []
+        side_mask = masks[1] if len(masks) > 1 else front_mask
+        for y in y_samples:
+            xs = np.where(side_mask[y])[0]
+            if len(xs) > 0:
+                side_rx.append((xs.max() - xs.min()) / 2.0)
+            else:
+                side_rx.append(rx_profile[y_samples.tolist().index(y)] * 0.95)
+        rz_profile = np.array(side_rx, dtype=np.float32)
+
+        from scipy.ndimage import gaussian_filter1d
+        rx_profile = gaussian_filter1d(rx_profile, sigma=1.5)
+        rz_profile = gaussian_filter1d(rz_profile, sigma=1.5)
+
+        z_heights = np.linspace(-0.75, 0.75, n_rings)
+
+        max_r = max(float(rx_profile.max()), float(rz_profile.max()), 1.0)
+        world_rx = (rx_profile / max_r) * 0.45
+        world_rz = (rz_profile / max_r) * 0.45
+
+        verts = []
+        colors = []
+
+        for i in range(n_rings):
+            h = z_heights[i]
+            rx = world_rx[i]
+            rz = world_rz[i]
+            y_pixel = int(y_samples[i])
+
+            for j in range(n_sectors):
+                x = float(rx * cos_t[j])
+                z = float(rz * sin_t[j])
+                verts.append([x, h, z])
+
+                az_deg = (math.degrees(thetas[j]) + 360) % 360
+                closest_view_idx = int(round(az_deg / 60.0)) % min(6, len(views))
+                view_arr = views[closest_view_idx]
+                px = int(np.clip(cx + (x / max(0.01, float(rx))) * float(rx_profile[i]) * 0.5, 0, img_size - 1))
+                py = int(np.clip(y_pixel, 0, img_size - 1))
+                c = view_arr[py, px]
+                colors.append([int(c[0]), int(c[1]), int(c[2]), 255])
+
+        verts = np.array(verts, dtype=np.float32)
+        colors = np.array(colors, dtype=np.uint8)
+
+        faces = []
+        for i in range(n_rings - 1):
+            for j in range(n_sectors):
+                next_j = (j + 1) % n_sectors
+                v0 = i * n_sectors + j
+                v1 = i * n_sectors + next_j
+                v2 = (i + 1) * n_sectors + next_j
+                v3 = (i + 1) * n_sectors + j
+                faces.append([v0, v1, v2])
+                faces.append([v0, v2, v3])
+
+        top_center = [0.0, float(z_heights[-1]), 0.0]
+        bot_center = [0.0, float(z_heights[0]), 0.0]
+        top_idx = len(verts)
+        bot_idx = len(verts) + 1
+        verts = np.vstack([verts, [top_center], [bot_center]])
+        colors = np.vstack([colors, [colors[-1]], [colors[0]]])
+
+        top_ring_start = (n_rings - 1) * n_sectors
+        bot_ring_start = 0
+
+        for j in range(n_sectors):
+            next_j = (j + 1) % n_sectors
+            faces.append([top_ring_start + j, top_ring_start + next_j, top_idx])
+            faces.append([bot_ring_start + next_j, bot_ring_start + j, bot_idx])
+
+        faces = np.array(faces, dtype=np.int32)
+
+        uvs = None
+        atlas = None
+        if self._texture_projector is not None:
+            try:
+                tex_res = self._texture_projector.project_texture_pass(
+                    vertices=verts,
+                    faces=faces,
+                    reference_image=front_img,
+                    multiview_views=views,
+                    multiview_masks=masks,
+                )
+                colors = tex_res.vertex_colors
+                uvs = tex_res.uv_coordinates
+                atlas = tex_res.texture_atlas
+            except Exception as exc:
+                logger.warning(f"Texture projection pass warning: {exc}")
+
+        if TRIMESH_AVAILABLE:
+            m = trimesh.Trimesh(
+                vertices=verts,
+                faces=faces,
+                vertex_colors=colors,
+                process=False,
+            )
+            if uvs is not None:
+                try:
+                    m.visual.uv = uvs
+                except Exception:
+                    pass
+            return m
+
+        return TrimeshFallback(
+            vertices=verts,
+            faces=faces,
+            vertex_colors=colors,
+            uv_coordinates=uvs,
+            texture_atlas=atlas,
+            is_watertight=True,
+        )
+
+    def _synthesize_mesh_from_depth_legacy(
+        self,
+        image_rgb: np.ndarray,
+        depth_map: np.ndarray,
+    ) -> Any:
         H, W = depth_map.shape
         stride = 4  # Downsample grid for balanced polygon count (approx 16k triangles)
 

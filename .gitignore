@@ -8,6 +8,7 @@ venv/
 env/
 .venv/
 .env/
+.env
 ENV/
 
 # ── Python cache & bytecode ──────────────────
@@ -85,3 +86,4 @@ htmlcov/
 
 # ── rembg / u2net download cache ─────────────
 u2net/
+outputs/*.stl

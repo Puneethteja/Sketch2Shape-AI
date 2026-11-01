@@ -18,7 +18,9 @@
         textPrimary: "#f8fafc",
         textMuted: "#94a3b8",
         textDark: "#64748b",
-        accent: "#38bdf8",
+        accent: "#7d2ae8",
+        accentCyan: "#00c4cc",
+        canvaGradient: "linear-gradient(135deg, #7d2ae8, #00c4cc)",
         gridLine: "#1e293b",
         gridCenter: "#334155",
     };
@@ -41,6 +43,8 @@
                 cdnThreeUrl: "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
                 cdnControlsUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js",
                 cdnGltfLoaderUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js",
+                cdnGltfExporterUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js",
+                cdnStlExporterUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js",
             }, options);
 
             this.activeModel = null;
@@ -62,6 +66,10 @@
             this.gridHelper = null;
             this.animationFrameId = null;
             this.resizeObserver = null;
+            this.eventController = new AbortController();
+            this.outputBindingInterval = null;
+            this.outputBindingHolder = null;
+            this.outputBindingBinding = null;
 
             this.dom = {
                 wrapper: null,
@@ -92,7 +100,9 @@
                     if (this.options.initialModel) {
                         this.loadGLB(this.options.initialModel);
                     } else {
-                        this.loadParametricDemo("vase");
+                        if (this.dom.emptyStage) {
+                            this.dom.emptyStage.style.display = "flex";
+                        }
                     }
                 })
                 .catch((err) => {
@@ -153,6 +163,31 @@
             this.dom.spinnerBar = spinnerOverlay.querySelector("#s2s-spinner-bar");
             this.dom.spinnerPercent = spinnerOverlay.querySelector("#s2s-spinner-percent");
             this.dom.spinnerText = spinnerOverlay.querySelector("#s2s-spinner-text");
+
+            const emptyStage = document.createElement("div");
+            emptyStage.className = "s2s-empty-stage";
+            emptyStage.id = "s2s-empty-stage";
+            emptyStage.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(circle at center, rgba(30, 41, 59, 0.45) 0%, rgba(9, 13, 22, 0.96) 100%);color:" + THEME.textMuted + ";z-index:20;user-select:none;padding:20px;text-align:center;";
+            emptyStage.innerHTML = '<div style="width:52px;height:52px;border-radius:12px;background:' + THEME.surfaceElevated + ';border:1px solid ' + THEME.border + ';display:flex;align-items:center;justify-content:center;color:' + THEME.accent + ';">' +
+                '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">' +
+                '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+                '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/>' +
+                '<line x1="12" y1="22.08" x2="12" y2="12"/>' +
+                '</svg>' +
+                '</div>' +
+                '<div style="font-size:13px;font-weight:600;color:' + THEME.textPrimary + ';letter-spacing:0.02em;">Interactive 3D Stage Ready</div>' +
+                '<div style="font-size:11px;color:' + THEME.textDark + ';max-width:270px;line-height:1.4;">Draw on the sketch canvas and click <b>Generate 3D Asset</b>, or explore a demo model.</div>' +
+                '<div style="display:flex;gap:6px;margin-top:4px;">' +
+                '<button type="button" class="s2s-btn" id="s2s-load-demo-btn" style="background:#0284c7;color:#ffffff;border-color:#38bdf8;">Explore Demo Model</button>' +
+                '</div>';
+            viewport.appendChild(emptyStage);
+            this.dom.emptyStage = emptyStage;
+            const loadDemoBtn = emptyStage.querySelector("#s2s-load-demo-btn");
+            if (loadDemoBtn) {
+                loadDemoBtn.addEventListener("click", () => {
+                    this.loadParametricDemo("vase");
+                });
+            }
 
             if (!document.getElementById("s2s-viewer-styles")) {
                 const styleEl = document.createElement("style");
@@ -226,6 +261,19 @@
             controlsGroup.appendChild(fullscreenBtn);
             this.dom.fullscreenBtn = fullscreenBtn;
 
+            const viewGroup = document.createElement("div");
+            viewGroup.style.cssText = "display:flex;align-items:center;gap:3px;margin-left:4px;border-left:1px solid " + THEME.border + ";padding-left:6px;";
+            ["Front", "Side", "Back", "Top", "Orbit"].forEach((vName) => {
+                const btn = document.createElement("button");
+                btn.className = "s2s-btn";
+                btn.style.cssText += "padding:3px 6px;font-size:10px;font-family:monospace;";
+                btn.textContent = vName;
+                btn.title = "Switch camera to " + vName + " view";
+                btn.addEventListener("click", () => this.setCameraPreset(vName.toLowerCase()));
+                viewGroup.appendChild(btn);
+            });
+            controlsGroup.appendChild(viewGroup);
+
             toolbar.appendChild(controlsGroup);
 
             const downloadGroup = document.createElement("div");
@@ -243,7 +291,22 @@
                 '<div id="s2s-dl-spinner" style="display:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.4);border-top-color:#ffffff;border-radius:50%;animation:s2s-spin 0.6s linear infinite;"></div>' +
                 '<span>Download .GLB</span>';
             downloadBtn.addEventListener("click", () => this.downloadBinary());
+            downloadBtn.disabled = true;
             downloadGroup.appendChild(downloadBtn);
+
+            const downloadStlBtn = document.createElement("button");
+            downloadStlBtn.className = "s2s-btn";
+            downloadStlBtn.style.cssText += "background:#1e293b;color:#38bdf8;border-color:#0284c7;font-weight:500;";
+            downloadStlBtn.title = "Download active 3D model as STL for 3D slicing & printing (.stl)";
+            downloadStlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+                '<polyline points="7 10 12 15 17 10"/>' +
+                '<line x1="12" y1="15" x2="12" y2="3"/>' +
+                '</svg>' +
+                '<span>Download .STL</span>';
+            downloadStlBtn.addEventListener("click", () => this.downloadSTL());
+            downloadGroup.appendChild(downloadStlBtn);
+
             toolbar.appendChild(downloadGroup);
 
             this.container.appendChild(toolbar);
@@ -255,8 +318,13 @@
         _setupOutputBinding() {
             const checkBinding = () => {
                 const holder = document.querySelector("#s2s-glb-output-url textarea") || document.querySelector("#s2s-glb-output-url input");
-                if (holder && !holder.__s2sBound) {
-                    holder.__s2sBound = true;
+                if (holder && holder.__s2sBinding?.owner !== this) {
+                    const previous = holder.__s2sBinding;
+                    if (previous) {
+                        holder.removeEventListener("input", previous.handler);
+                        holder.removeEventListener("change", previous.handler);
+                        previous.observer?.disconnect();
+                    }
                     const onUrlChange = () => {
                         const val = holder.value ? holder.value.trim() : "";
                         if (val && val !== this.lastLoadedUrl) {
@@ -268,14 +336,18 @@
                     holder.addEventListener("change", onUrlChange);
                     const observer = new MutationObserver(onUrlChange);
                     observer.observe(holder, { attributes: true, childList: true, characterData: true, subtree: true });
+                    holder.__s2sBinding = { owner: this, handler: onUrlChange, observer };
+                    this.outputBindingHolder = holder;
+                    this.outputBindingBinding = holder.__s2sBinding;
                 }
             };
-            setInterval(checkBinding, 500);
+            this.outputBindingInterval = setInterval(checkBinding, 500);
+            checkBinding();
         }
 
         _loadThreeDependencies() {
             return new Promise((resolve, reject) => {
-                if (window.THREE && window.THREE.OrbitControls && window.THREE.GLTFLoader) {
+                if (window.THREE && window.THREE.OrbitControls && window.THREE.GLTFLoader && window.THREE.GLTFExporter) {
                     return resolve();
                 }
 
@@ -304,6 +376,8 @@
                     .then(() => Promise.all([
                         loadScript(this.options.cdnControlsUrl),
                         loadScript(this.options.cdnGltfLoaderUrl),
+                        loadScript(this.options.cdnGltfExporterUrl),
+                        loadScript(this.options.cdnStlExporterUrl).catch(() => {}),
                     ]))
                     .then(() => resolve())
                     .catch((err) => reject(err));
@@ -352,7 +426,7 @@
                 });
                 window.addEventListener("mouseup", () => {
                     this.dom.viewport.style.cursor = "grab";
-                });
+                }, { signal: this.eventController.signal });
             }
 
             const ambient = new THREE.HemisphereLight(0xf8fafc, 0x0f172a, 0.7);
@@ -405,7 +479,7 @@
                 this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
             };
 
-            window.addEventListener("resize", handleResize);
+            window.addEventListener("resize", handleResize, { signal: this.eventController.signal });
 
             if (typeof ResizeObserver !== "undefined") {
                 this.resizeObserver = new ResizeObserver(() => handleResize());
@@ -419,7 +493,7 @@
                     this.dom.fullscreenBtn.classList.toggle("active", this.isFullscreen);
                 }
                 setTimeout(handleResize, 100);
-            });
+            }, { signal: this.eventController.signal });
         }
 
         toggleFullscreen() {
@@ -441,16 +515,40 @@
             this.controls.update();
         }
 
+        setCameraPreset(name) {
+            if (!this.camera || !this.controls) return;
+            const presets = {
+                front: { pos: [0, 0.5, 3.2], target: [0, 0.5, 0] },
+                side: { pos: [3.2, 0.5, 0], target: [0, 0.5, 0] },
+                right: { pos: [3.2, 0.5, 0], target: [0, 0.5, 0] },
+                back: { pos: [0, 0.5, -3.2], target: [0, 0.5, 0] },
+                top: { pos: [0, 3.8, 0.001], target: [0, 0.2, 0] },
+                orbit: { pos: [2.2, 1.8, 2.2], target: [0, 0.5, 0] },
+            };
+            const key = (name || "front").toLowerCase();
+            const p = presets[key] || presets.front;
+            this.camera.position.set(p.pos[0], p.pos[1], p.pos[2]);
+            this.controls.target.set(p.target[0], p.target[1], p.target[2]);
+            this.controls.update();
+            if (this.dom.statBadge) {
+                this.dom.statBadge.textContent = "View: " + key.toUpperCase();
+            }
+        }
+
         resetAsset() {
             this._clearModelGroup();
+            if (this.activeBlobUrl) URL.revokeObjectURL(this.activeBlobUrl);
             this.activeModel = null;
             this.activeBlob = null;
             this.activeBlobUrl = null;
             this.lastLoadedUrl = null;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = true;
             this.resetCamera();
-            this.loadParametricDemo("vase");
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "flex";
+            }
             if (this.dom.statBadge) {
-                this.dom.statBadge.textContent = "Asset Reset";
+                this.dom.statBadge.textContent = "Stage Ready";
                 this.dom.statBadge.style.color = THEME.textDark;
             }
         }
@@ -471,6 +569,9 @@
 
         showLoading(message = "Loading 3D asset...", progress = 0) {
             this.isLoading = true;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (this.dom.spinnerOverlay) {
                 this.dom.spinnerOverlay.style.display = "flex";
                 if (this.dom.spinnerText) this.dom.spinnerText.textContent = message;
@@ -502,6 +603,9 @@
 
         loadGLB(source, filename = "sketch2shape_generated.glb") {
             const THREE = window.THREE;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (!THREE || !THREE.GLTFLoader) {
                 console.warn("[Sketch2ShapeViewer] GLTFLoader unavailable.");
                 return;
@@ -531,6 +635,7 @@
                     this._frameModel(scene);
                     this.modelGroup.add(scene);
                     this.activeModel = scene;
+                    if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = false;
 
                     if (this.isWireframe) this.setWireframe(true);
 
@@ -560,6 +665,8 @@
                 },
                 (err) => {
                     console.error("[Sketch2ShapeViewer] Error loading GLB asset:", err);
+                    this.activeModel = null;
+                    if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = true;
                     this.hideLoading();
                     if (this.dom.statBadge) {
                         this.dom.statBadge.textContent = "GLB Load Failed";
@@ -607,6 +714,9 @@
 
         loadParametricDemo(type = "vase") {
             const THREE = window.THREE;
+            if (this.dom.emptyStage) {
+                this.dom.emptyStage.style.display = "none";
+            }
             if (!THREE) return;
 
             this._clearModelGroup();
@@ -638,6 +748,7 @@
             this._frameModel(mesh);
             this.modelGroup.add(mesh);
             this.activeModel = mesh;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = false;
 
             if (this.dom.statBadge) {
                 const count = geometry.attributes.position.count;
@@ -647,6 +758,10 @@
 
         downloadBinary() {
             if (this.isDownloading) return;
+            if (!this.activeModel && !this.activeBlob && !this.lastLoadedUrl) {
+                if (this.dom.statBadge) this.dom.statBadge.textContent = "No model is available to download.";
+                return;
+            }
             this.isDownloading = true;
 
             const icon = this.dom.downloadBtn.querySelector("#s2s-dl-icon");
@@ -712,14 +827,148 @@
         }
 
         _fallbackDownload() {
-            const glbContent = JSON.stringify({
-                asset: { version: "2.0", generator: "Sketch2Shape AI TechZephyr 4.0 Exporter" },
-                scenes: [{ nodes: [0] }],
-                nodes: [{ name: "Sketch2Shape_Mesh" }],
-            });
-            const blob = new Blob([glbContent], { type: "model/gltf-binary" });
-            this._triggerFileSave(blob, this.activeFilename);
-            this._resetDownloadButtonState();
+            this.isDownloading = false;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = !this.activeModel;
+            if (this.dom.downloadSpinner) this.dom.downloadSpinner.style.display = "none";
+            const icon = this.dom.downloadBtn?.querySelector("#s2s-dl-icon");
+            if (icon) icon.style.display = "inline-block";
+            if (this.dom.statBadge) {
+                this.dom.statBadge.textContent = "GLB export is unavailable; no file was generated.";
+                this.dom.statBadge.style.color = "#ef4444";
+            }
+        }
+
+        downloadSTL() {
+            const stlFilename = (this.activeFilename || "sketch2shape_generated.glb").replace(/\.[^/.]+$/, "") + ".stl";
+            this.exportSceneToSTL(stlFilename);
+        }
+
+        exportSceneToSTL(filename = "sketch2shape_generated.stl") {
+            const THREE = window.THREE;
+            if (!this.activeModel || !this.modelGroup) {
+                if (this.dom.statBadge) this.dom.statBadge.textContent = "Generate or load a model before exporting STL.";
+                return;
+            }
+
+            // 1. Native THREE.STLExporter if available
+            if (THREE && window.THREE.STLExporter) {
+                try {
+                    const exporter = new THREE.STLExporter();
+                    const result = exporter.parse(this.modelGroup, { binary: true });
+                    const blob = new Blob([result], { type: "application/octet-stream" });
+                    this._triggerFileSave(blob, filename);
+                    return;
+                } catch (e) {
+                    console.warn("[Sketch2ShapeViewer] THREE.STLExporter failed, using robust fallback:", e);
+                }
+            }
+
+            // 2. High-performance, offline-resilient binary STL serializer
+            try {
+                const triangles = [];
+                this.modelGroup.updateMatrixWorld(true);
+                this.modelGroup.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        const geom = child.geometry;
+                        const pos = geom.attributes.position;
+                        if (!pos) return;
+
+                        const matrix = child.matrixWorld;
+                        const vA = new THREE.Vector3();
+                        const vB = new THREE.Vector3();
+                        const vC = new THREE.Vector3();
+                        const normal = new THREE.Vector3();
+
+                        const index = geom.index;
+                        if (index) {
+                            for (let i = 0; i < index.count; i += 3) {
+                                const a = index.getX(i);
+                                const b = index.getX(i + 1);
+                                const c = index.getX(i + 2);
+
+                                vA.fromBufferAttribute(pos, a).applyMatrix4(matrix);
+                                vB.fromBufferAttribute(pos, b).applyMatrix4(matrix);
+                                vC.fromBufferAttribute(pos, c).applyMatrix4(matrix);
+
+                                const cb = new THREE.Vector3().subVectors(vC, vB);
+                                const ab = new THREE.Vector3().subVectors(vA, vB);
+                                normal.crossVectors(cb, ab).normalize();
+
+                                triangles.push({
+                                    normal: [normal.x, normal.y, normal.z],
+                                    a: [vA.x, vA.y, vA.z],
+                                    b: [vB.x, vB.y, vB.z],
+                                    c: [vC.x, vC.y, vC.z]
+                                });
+                            }
+                        } else {
+                            for (let i = 0; i < pos.count; i += 3) {
+                                vA.fromBufferAttribute(pos, i).applyMatrix4(matrix);
+                                vB.fromBufferAttribute(pos, i + 1).applyMatrix4(matrix);
+                                vC.fromBufferAttribute(pos, i + 2).applyMatrix4(matrix);
+
+                                const cb = new THREE.Vector3().subVectors(vC, vB);
+                                const ab = new THREE.Vector3().subVectors(vA, vB);
+                                normal.crossVectors(cb, ab).normalize();
+
+                                triangles.push({
+                                    normal: [normal.x, normal.y, normal.z],
+                                    a: [vA.x, vA.y, vA.z],
+                                    b: [vB.x, vB.y, vB.z],
+                                    c: [vC.x, vC.y, vC.z]
+                                });
+                            }
+                        }
+                    }
+                });
+
+                if (triangles.length === 0) {
+                    console.warn("[Sketch2ShapeViewer] No mesh triangles found to export to STL.");
+                    return;
+                }
+
+                // Standard Binary STL format: 80 bytes header + 4 bytes triangle count + 50 bytes per facet
+                const bufferSize = 84 + 50 * triangles.length;
+                const buffer = new ArrayBuffer(bufferSize);
+                const view = new DataView(buffer);
+
+                // Write 80-byte header
+                const headerText = "Sketch2Shape AI Binary STL Exporter (TechZephyr 4.0)";
+                for (let i = 0; i < 80; i++) {
+                    view.setUint8(i, i < headerText.length ? headerText.charCodeAt(i) : 0);
+                }
+
+                // Write facet count (uint32, little-endian)
+                view.setUint32(80, triangles.length, true);
+
+                let offset = 84;
+                for (let i = 0; i < triangles.length; i++) {
+                    const tri = triangles[i];
+                    // Normal
+                    view.setFloat32(offset, tri.normal[0], true); offset += 4;
+                    view.setFloat32(offset, tri.normal[1], true); offset += 4;
+                    view.setFloat32(offset, tri.normal[2], true); offset += 4;
+                    // Vertex 1
+                    view.setFloat32(offset, tri.a[0], true); offset += 4;
+                    view.setFloat32(offset, tri.a[1], true); offset += 4;
+                    view.setFloat32(offset, tri.a[2], true); offset += 4;
+                    // Vertex 2
+                    view.setFloat32(offset, tri.b[0], true); offset += 4;
+                    view.setFloat32(offset, tri.b[1], true); offset += 4;
+                    view.setFloat32(offset, tri.b[2], true); offset += 4;
+                    // Vertex 3
+                    view.setFloat32(offset, tri.c[0], true); offset += 4;
+                    view.setFloat32(offset, tri.c[1], true); offset += 4;
+                    view.setFloat32(offset, tri.c[2], true); offset += 4;
+                    // Attribute byte count (uint16)
+                    view.setUint16(offset, 0, true); offset += 2;
+                }
+
+                const blob = new Blob([buffer], { type: "application/octet-stream" });
+                this._triggerFileSave(blob, filename);
+            } catch (err) {
+                console.error("[Sketch2ShapeViewer] STL export error:", err);
+            }
         }
 
         _resetDownloadButtonState() {
@@ -752,6 +1001,19 @@
         }
 
         destroy() {
+            if (this.outputBindingInterval) {
+                clearInterval(this.outputBindingInterval);
+                this.outputBindingInterval = null;
+            }
+            if (this.outputBindingBinding && this.outputBindingHolder?.__s2sBinding === this.outputBindingBinding) {
+                this.outputBindingHolder.removeEventListener("input", this.outputBindingBinding.handler);
+                this.outputBindingHolder.removeEventListener("change", this.outputBindingBinding.handler);
+                this.outputBindingBinding.observer?.disconnect();
+                delete this.outputBindingHolder.__s2sBinding;
+            }
+            this.outputBindingHolder = null;
+            this.outputBindingBinding = null;
+            this.eventController.abort();
             if (this.animationFrameId) {
                 cancelAnimationFrame(this.animationFrameId);
             }

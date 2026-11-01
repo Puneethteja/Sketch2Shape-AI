@@ -33,6 +33,11 @@ from PIL import Image
 
 logger = logging.getLogger("sketch2shape.linker")
 
+try:
+    from engine.multiview import MultiViewResult
+except ImportError:
+    MultiViewResult = None
+
 
 @dataclass
 class StageHandoff:
@@ -50,6 +55,8 @@ class StageHandoff:
     seed: int = -1
     gen_elapsed: float = 0.0
     prompt: str = ""
+    original_sketch: Optional[Any] = None
+    multi_view_result: Optional[Any] = None
     metadata: dict = field(default_factory=dict)
 
 
@@ -79,6 +86,7 @@ class StageLinker:
         seed: int = -1,
         gen_elapsed: float = 0.0,
         prompt: str = "",
+        original_sketch: Optional[Any] = None,
     ) -> StageHandoff:
         """
         Extracts depth prior, shading map, luminance, and foreground mask from
@@ -119,6 +127,7 @@ class StageLinker:
             seed=seed,
             gen_elapsed=gen_elapsed,
             prompt=prompt,
+            original_sketch=original_sketch,
             metadata={
                 "fg_pixel_count": int(foreground_mask.sum()),
                 "depth_min": float(depth_prior.min()),
@@ -257,7 +266,13 @@ class StageLinker:
         fused_depth, normal_map = self.inject_depth_prior(reconstructor, handoff)
 
         img_uint8 = np.clip(handoff.image_np * 255.0, 0, 255).astype(np.uint8)
-        raw_mesh = reconstructor._synthesize_mesh_from_depth(img_uint8, fused_depth)
+        raw_mesh = reconstructor._synthesize_mesh_from_depth(
+            img_uint8,
+            fused_depth,
+            prompt=getattr(handoff, "prompt", ""),
+            sketch_input=getattr(handoff, "original_sketch", None),
+            multi_view_result=getattr(handoff, "multi_view_result", None),
+        )
 
         watertight_mesh = repair_mesh(raw_mesh, verbose=False)
         try:

@@ -34,6 +34,13 @@ from engine.linker import StageHandoff, StageLinker
 from engine.reconstruction import MeshReconstructor, ReconstructionConfig
 
 try:
+    from engine.multiview import MultiViewSynthesizer
+    _MULTIVIEW_PIPELINE_AVAILABLE = True
+except ImportError:
+    _MULTIVIEW_PIPELINE_AVAILABLE = False
+    MultiViewSynthesizer = None
+
+try:
     from utils.mesh_utils import export_mesh, repair_mesh
 except Exception:
     from engine.mesh_utils import repair_mesh as _engine_repair_mesh
@@ -61,13 +68,15 @@ class StageTiming:
     preprocess: float = 0.0
     generation: float = 0.0
     linker_extraction: float = 0.0
+    multiview_synthesis: float = 0.0
     reconstruction: float = 0.0
     export: float = 0.0
 
     @property
     def total(self) -> float:
         return round(
-            self.preprocess + self.generation + self.linker_extraction + self.reconstruction + self.export,
+            self.preprocess + self.generation + self.linker_extraction
+            + self.multiview_synthesis + self.reconstruction + self.export,
             3,
         )
 
@@ -84,6 +93,11 @@ class GenerationResult:
     stage_timing: Optional[StageTiming] = None
     handoff_metadata: Optional[Dict[str, Any]] = None
     glb_path: Optional[str] = None
+    multiview_grid: Optional[Image.Image] = None
+    texture_atlas: Optional[Image.Image] = None
+    color_fidelity_score: float = 1.0
+    has_uv_texture: bool = False
+    gltf_path: Optional[str] = None
 
     @property
     def is_watertight(self) -> bool:
@@ -233,6 +247,7 @@ class Sketch2ShapePipeline:
             seed=concrete_seed,
             gen_elapsed=gen_elapsed,
             prompt=prompt or "",
+            original_sketch=preprocessed_img,
         )
         timing.linker_extraction = round(time.perf_counter() - linker_t0, 4)
         logger.info(
@@ -240,6 +255,31 @@ class Sketch2ShapePipeline:
             f"FG pixels: {handoff.metadata.get('fg_pixel_count', 0)} | "
             f"Depth prior max: {handoff.metadata.get('depth_max', 0.0):.3f}"
         )
+
+        # [Stage 2.5] Multi-View Diffusion Synthesis
+        mv_grid = None
+        if _MULTIVIEW_PIPELINE_AVAILABLE:
+            mv_t0 = time.perf_counter()
+            logger.info("[Stage 2.5] Multi-View Diffusion Synthesis (6 canonical views)...")
+            try:
+                mv_synth = MultiViewSynthesizer()
+                mv_result = mv_synth.synthesize(
+                    image_input=gen_image,
+                    prompt=prompt or "",
+                    seed=concrete_seed,
+                )
+                handoff.multi_view_result = mv_result
+                mv_grid = mv_result.composite_grid
+                timing.multiview_synthesis = round(time.perf_counter() - mv_t0, 3)
+                logger.info(
+                    f"[Stage 2.5] Multi-View Synthesis completed in {timing.multiview_synthesis:.3f}s | "
+                    f"Views: {len(mv_result.views)} | Grid: {mv_result.composite_grid.size}"
+                )
+            except Exception as exc:
+                logger.warning(f"[Stage 2.5] Multi-view synthesis skipped: {exc}")
+                timing.multiview_synthesis = round(time.perf_counter() - mv_t0, 3)
+        else:
+            logger.info("[Stage 2.5] MultiViewSynthesizer not available, skipping multi-view stage")
 
         logger.info("[Sequential Handover] Evacuating Stage 2 model weights from VRAM...")
         self._evacuate_vram(generator)
@@ -317,6 +357,16 @@ class Sketch2ShapePipeline:
         )
         logger.info("=" * 70)
 
+        # Extract texture and color fidelity telemetry
+        atlas_img = getattr(watertight_mesh, "texture_atlas", None)
+        has_uv = getattr(watertight_mesh, "uv_coordinates", None) is not None
+        if hasattr(watertight_mesh, "vertex_colors") and len(watertight_mesh.vertex_colors) > 0:
+            c_arr = watertight_mesh.vertex_colors[:, :3].astype(np.float32)
+            mean_sat = float(np.mean(c_arr.max(axis=-1) - c_arr.min(axis=-1)))
+            fidelity = float(np.clip(mean_sat / 128.0, 0.45, 1.0))
+        else:
+            fidelity = 1.0
+
         return GenerationResult(
             depth_map=depth_map,
             normal_map=normal_map,
@@ -328,6 +378,10 @@ class Sketch2ShapePipeline:
             stage_timing=timing,
             handoff_metadata=handoff.metadata,
             glb_path=glb_path_exported,
+            multiview_grid=mv_grid,
+            texture_atlas=atlas_img,
+            color_fidelity_score=fidelity,
+            has_uv_texture=has_uv,
         )
 
     def _preprocess_input(self, source: Any) -> Image.Image:
@@ -394,6 +448,7 @@ def main() -> int:
         print(f"    - Preprocess        : {t.preprocess:.3f}s")
         print(f"    - Generation        : {t.generation:.3f}s")
         print(f"    - Linker Extraction : {t.linker_extraction:.4f}s")
+        print(f"    - Multi-View Synth  : {t.multiview_synthesis:.3f}s")
         print(f"    - Reconstruction    : {t.reconstruction:.3f}s")
         if t.export > 0:
             print(f"    - Export            : {t.export:.3f}s")
