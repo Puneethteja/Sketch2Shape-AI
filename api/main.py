@@ -15,6 +15,7 @@ Features
 """
 
 from __future__ import annotations
+import dataclasses
 
 import base64
 import io
@@ -108,7 +109,7 @@ def _get_pipeline():
 
         _pipeline = Sketch2ShapePipeline(
             device=device,
-            use_fp16=use_fp16,
+            force_cpu=(device == 'cpu'),
         )
         _pipeline_device = device
         _pipeline_dtype = "fp16" if use_fp16 else "fp32"
@@ -239,7 +240,7 @@ async def generate(
 
     try:
         result = pipeline.run(
-            image=input_image,
+            sketch_source=input_image,
             prompt=prompt or None,
             seed=actual_seed,
             num_inference_steps=num_inference_steps,
@@ -329,7 +330,7 @@ async def generate(
             # Timing
             "timing": {
                 "total_seconds": round(total_time, 3),
-                "stage_timing": getattr(result, "stage_timing", {}),
+                "stage_timing": dataclasses.asdict(result.stage_timing) if dataclasses.is_dataclass(getattr(result, "stage_timing", None)) else {},
             },
             # Device info
             "device": _pipeline_device,
@@ -423,3 +424,8 @@ async def get_output_file(filename: str):
         filename=safe_name,
         media_type="application/octet-stream",
     )
+
+# Mount frontend Single Page Application at root
+WEB_DIR = BASE_DIR / "web"
+if WEB_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
