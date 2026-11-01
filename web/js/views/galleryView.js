@@ -44,7 +44,7 @@ export function createGalleryView() {
           <!-- Gallery Grid -->
           <div id="gallery-grid" class="gallery-grid">
             ${samples.map(item => `
-              <div class="gallery-card" data-id="${item.id}" data-category="${item.category}">
+              <div class="gallery-card" data-id="${item.id}" data-category="${item.category}" role="button" tabindex="0" aria-label="Inspect ${item.title}">
                 <div class="gallery-thumb-wrap">
                   <img src="${item.sketchPath}" alt="${item.title}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'100\\' height=\\'100\\' fill=\\'%23334155\\'><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'white\\'>3D</text></svg>'">
                   <span class="badge badge-cyan" style="position: absolute; top: 10px; right: 10px;">${item.category}</span>
@@ -52,6 +52,8 @@ export function createGalleryView() {
                 <div class="gallery-card-body">
                   <h3 class="gallery-card-title">${item.title}</h3>
                   <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.4;">${item.description || "Validated closed-manifold 3D asset."}</p>
+                  ${item.parentId ? `<p style="font-size:10px;color:var(--text-muted)">Variation of ${item.parentId}</p>` : ""}
+                  ${item.createdAt ? `<p style="font-size:10px;color:var(--text-muted)">${new Date(item.createdAt).toLocaleString()}</p>` : ""}
                   <div class="gallery-card-meta">
                     <span>🔷 ${item.vertices ? item.vertices.toLocaleString() : '1,800'} Verts</span>
                     <span style="color: var(--accent-emerald);">⏱️ ${item.latency || '6.8s'}</span>
@@ -177,8 +179,10 @@ export function createGalleryView() {
       const statFaces = document.getElementById("modal-stat-faces");
       const statVerts = document.getElementById("modal-stat-verts");
       const viewportContainer = document.getElementById("modal-3d-viewport");
+      let modalReturnFocus = null;
 
-      const openModal = (sample) => {
+      const openModal = (sample, trigger) => {
+        modalReturnFocus = trigger || null;
         modalTitle.textContent = sample.title;
         modalMeta.textContent = `Category: ${sample.category} | Pipeline ID: ${sample.id}`;
         modalDesc.textContent = sample.description || "Synthesized 3D mesh via ControlNet conditioning and StageLinker geometry pass.";
@@ -191,12 +195,22 @@ export function createGalleryView() {
         // Initialize 3D Modal Viewer
         if (modalViewer) modalViewer.destroy();
         modalViewer = new ModelViewer(viewportContainer, { autoRotate: true });
-        modalViewer.loadProceduralShape(sample.shapeType || "vase");
+        if (sample.glbPath) {
+          modalViewer.loadGLB(sample.glbPath, {
+            onError: () => store.showToast("The saved mesh could not be loaded in the viewer.", "error")
+          });
+        }
+          else if (sample.shapeType) modalViewer.loadProceduralShape(sample.shapeType);
+        else {
+          store.showToast("This gallery item has no saved 3D file to preview.", "error");
+        }
 
         // Download hooks
         document.getElementById("btn-modal-dl-glb").onclick = () => {
+          const glbPath = sample.glbPath || (sample.id.startsWith("gen_") || sample.id.startsWith("variation_") ? null : "../outputs/samples/sample_01_vase/model.glb");
+          if (!glbPath) { store.showToast("This item has no downloadable GLB file.", "error"); return; }
           const a = document.createElement("a");
-          a.href = sample.glbPath || "../outputs/samples/sample_01_vase/model.glb";
+          a.href = glbPath;
           a.download = `${sample.id}.glb`;
           document.body.appendChild(a);
           a.click();
@@ -205,8 +219,14 @@ export function createGalleryView() {
         };
 
         document.getElementById("btn-modal-dl-obj").onclick = () => {
+          if ((sample.id.startsWith("gen_") || sample.id.startsWith("variation_")) && !sample.objPath) {
+            store.showToast("This saved model has no OBJ export. Generate it again with OBJ selected.", "info");
+            return;
+          }
           const a = document.createElement("a");
-          a.href = sample.objPath || "../outputs/samples/sample_01_vase/model.obj";
+          const objPath = sample.objPath || (sample.id.startsWith("gen_") || sample.id.startsWith("variation_") ? null : "../outputs/samples/sample_01_vase/model.obj");
+          if (!objPath) { store.showToast("This item has no downloadable OBJ file.", "error"); return; }
+          a.href = objPath;
           a.download = `${sample.id}.obj`;
           document.body.appendChild(a);
           a.click();
@@ -216,10 +236,14 @@ export function createGalleryView() {
       };
 
       cards.forEach(card => {
-        card.addEventListener("click", () => {
+        const inspect = () => {
           const id = card.getAttribute("data-id");
           const sample = samples.find(s => s.id === id);
-          if (sample) openModal(sample);
+          if (sample) openModal(sample, card);
+        };
+        card.addEventListener("click", inspect);
+        card.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); inspect(); }
         });
       });
 
@@ -229,6 +253,7 @@ export function createGalleryView() {
           modalViewer.destroy();
           modalViewer = null;
         }
+        if (modalReturnFocus?.isConnected) modalReturnFocus.focus();
       };
 
       if (btnClose) btnClose.addEventListener("click", closeModal);
@@ -258,9 +283,18 @@ export function createGalleryView() {
           rotToggle.classList.toggle("active", rot);
         });
       }
+
+      this.onGalleryKeyDown = (event) => {
+        if (event.key === "Escape" && backdrop?.style.display !== "none") closeModal();
+      };
+      window.addEventListener("keydown", this.onGalleryKeyDown);
     },
 
     destroy() {
+      if (this.onGalleryKeyDown) {
+        window.removeEventListener("keydown", this.onGalleryKeyDown);
+        this.onGalleryKeyDown = null;
+      }
       if (modalViewer) {
         modalViewer.destroy();
         modalViewer = null;

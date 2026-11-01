@@ -9,9 +9,11 @@ export class Router {
     this.container = document.getElementById(containerId);
     this.currentView = null;
     this.isTransitioning = false;
+    this.pendingHash = null;
+    this.boundHashChange = () => this.handleRoute();
 
     // Bind hash change listener
-    window.addEventListener("hashchange", () => this.handleRoute());
+    window.addEventListener("hashchange", this.boundHashChange);
   }
 
   init() {
@@ -23,8 +25,11 @@ export class Router {
   }
 
   async handleRoute() {
-    if (this.isTransitioning) return;
     const hash = window.location.hash.split("?")[0] || "#/studio";
+    if (this.isTransitioning) {
+      this.pendingHash = hash;
+      return;
+    }
     const route = this.routes[hash] || this.routes["404"];
 
     if (!route) {
@@ -78,7 +83,18 @@ export class Router {
     requestAnimationFrame(() => {
       this.container.classList.remove("view-enter");
       this.isTransitioning = false;
+      const latestHash = window.location.hash.split("?")[0] || "#/studio";
+      if (this.pendingHash || latestHash !== hash) {
+        this.pendingHash = null;
+        this.handleRoute();
+      }
     });
+  }
+
+  destroy() {
+    window.removeEventListener("hashchange", this.boundHashChange);
+    if (this.currentView && typeof this.currentView.destroy === "function") this.currentView.destroy();
+    this.currentView = null;
   }
 
   updateActiveNavLinks(currentHash) {

@@ -84,13 +84,36 @@ export class ModelViewer {
       this.scene.add(this.gridHelper);
     }
 
-    this.loadProceduralShape("vase");
+    this.showEmptyState();
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.container);
 
     this.animate = this.animate.bind(this);
     this.animate();
+  }
+
+  showEmptyState() {
+    if (!this.container) return;
+    const empty = document.createElement("div");
+    empty.className = "viewer-empty-state";
+    empty.textContent = "Generate a model to inspect it here";
+    empty.style.cssText = "position:absolute;inset:0;display:grid;place-items:center;color:var(--text-muted);font-size:12px;pointer-events:none;";
+    this.container.style.position = "relative";
+    this.container.appendChild(empty);
+    this.emptyState = empty;
+  }
+
+  setView(view) {
+    if (!this.camera || !this.controls) return;
+    const distance = this.camera.position.distanceTo(this.controls.target) || 3;
+    const vectors = { front:[0,0,1], back:[0,0,-1], left:[-1,0,0], right:[1,0,0], top:[0,1,0], bottom:[0,-1,0], iso:[1,0.8,1] };
+    const direction = vectors[view];
+    if (!direction) return;
+    this.camera.position.copy(this.controls.target).add(new THREE.Vector3(...direction).normalize().multiplyScalar(distance));
+    this.camera.up.set(0, view === "top" || view === "bottom" ? 0 : 1, view === "top" ? -1 : view === "bottom" ? 1 : 0);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
   }
 
   handleResize() {
@@ -113,6 +136,7 @@ export class ModelViewer {
   }
 
   clearActiveMesh() {
+    if (this.emptyState) { this.emptyState.remove(); this.emptyState = null; }
     if (this.activeMesh) {
       this.scene.remove(this.activeMesh);
       if (this.activeMesh.geometry) this.activeMesh.geometry.dispose();
@@ -192,8 +216,11 @@ export class ModelViewer {
     };
   }
 
-  loadGLB(url) {
-    if (!url || typeof THREE.GLTFLoader === "undefined") return;
+  loadGLB(url, options = {}) {
+    if (!url || typeof THREE.GLTFLoader === "undefined") {
+      if (typeof options.onError === "function") options.onError(new Error("GLTFLoader is unavailable."));
+      return;
+    }
 
     const loader = new THREE.GLTFLoader();
     loader.load(
@@ -224,7 +251,8 @@ export class ModelViewer {
       },
       undefined,
       (error) => {
-        this.loadProceduralShape("vase");
+        if (typeof options.onError === "function") options.onError(error);
+        else if (typeof options.onError !== "function") console.error("Generated model could not be loaded; no placeholder model was substituted.", error);
       }
     );
   }
@@ -261,6 +289,9 @@ export class ModelViewer {
     }
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
+    }
+    if (this.controls && typeof this.controls.dispose === "function") {
+      this.controls.dispose();
     }
     this.clearActiveMesh();
     if (this.renderer && this.renderer.domElement) {

@@ -11,6 +11,7 @@ import { createPipelineView } from "./views/pipelineView.js";
 import { createBenchmarksView } from "./views/benchmarksView.js";
 import { createSettingsView } from "./views/settingsView.js";
 import { createNotFoundView } from "./views/notFoundView.js";
+import { createAnalysisView } from "./views/analysisView.js";
 
 // Route Definition Table
 const ROUTES = {
@@ -22,6 +23,7 @@ const ROUTES = {
     title: "3D Asset Gallery",
     view: createGalleryView,
   },
+  "#/analysis": { title: "Model & Metrics", view: createAnalysisView },
   "#/pipeline": {
     title: "AI Pipeline Architecture",
     view: createPipelineView,

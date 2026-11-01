@@ -139,12 +139,12 @@ class StateStore {
       
       // Active 3D Model Display
       activeModel: {
-        title: "Default Vase Preview",
-        shapeType: "vase",
-        vertices: 2184,
-        faces: 4368,
-        manifold: true,
-        latency: "6.84s",
+        title: "No model generated",
+        shapeType: null,
+        vertices: null,
+        faces: null,
+        manifold: null,
+        latency: null,
         glbUrl: null,
       },
       
@@ -193,11 +193,18 @@ class StateStore {
   }
 
   addGeneratedAsset(asset) {
+    this.state.samples = this.state.samples.filter(existing => existing.id !== asset.id);
     this.state.samples.unshift(asset);
     try {
-      const userOnly = this.state.samples.filter(s => s.id.startsWith("gen_"));
+      const userOnly = this.state.samples.filter(s => s.id.startsWith("gen_") || s.id.startsWith("variation_"));
       localStorage.setItem("s2s_user_assets", JSON.stringify(userOnly));
     } catch (e) {}
+    this.bus.emit("gallery:update", this.state.samples);
+  }
+
+  clearGeneratedAssets() {
+    this.state.samples = this.state.samples.filter(s => !s.id.startsWith("gen_") && !s.id.startsWith("variation_"));
+    try { localStorage.removeItem("s2s_user_assets"); } catch (error) { console.warn("Could not clear persisted assets", error); }
     this.bus.emit("gallery:update", this.state.samples);
   }
 

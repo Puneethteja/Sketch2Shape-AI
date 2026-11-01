@@ -32,6 +32,12 @@ export function renderNavbar() {
             </a>
           </li>
           <li>
+            <a href="#/analysis" class="nav-link">
+              <span class="nav-icon">📐</span>
+              <span class="nav-label">Model &amp; Metrics</span>
+            </a>
+          </li>
+          <li>
             <a href="#/pipeline" class="nav-link">
               <span class="nav-icon">⚡</span>
               <span class="nav-label">Architecture</span>

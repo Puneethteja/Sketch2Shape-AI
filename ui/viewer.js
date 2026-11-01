@@ -43,6 +43,7 @@
                 cdnThreeUrl: "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
                 cdnControlsUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js",
                 cdnGltfLoaderUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js",
+                cdnGltfExporterUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js",
                 cdnStlExporterUrl: "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js",
             }, options);
 
@@ -65,6 +66,10 @@
             this.gridHelper = null;
             this.animationFrameId = null;
             this.resizeObserver = null;
+            this.eventController = new AbortController();
+            this.outputBindingInterval = null;
+            this.outputBindingHolder = null;
+            this.outputBindingBinding = null;
 
             this.dom = {
                 wrapper: null,
@@ -286,6 +291,7 @@
                 '<div id="s2s-dl-spinner" style="display:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.4);border-top-color:#ffffff;border-radius:50%;animation:s2s-spin 0.6s linear infinite;"></div>' +
                 '<span>Download .GLB</span>';
             downloadBtn.addEventListener("click", () => this.downloadBinary());
+            downloadBtn.disabled = true;
             downloadGroup.appendChild(downloadBtn);
 
             const downloadStlBtn = document.createElement("button");
@@ -312,8 +318,13 @@
         _setupOutputBinding() {
             const checkBinding = () => {
                 const holder = document.querySelector("#s2s-glb-output-url textarea") || document.querySelector("#s2s-glb-output-url input");
-                if (holder && !holder.__s2sBound) {
-                    holder.__s2sBound = true;
+                if (holder && holder.__s2sBinding?.owner !== this) {
+                    const previous = holder.__s2sBinding;
+                    if (previous) {
+                        holder.removeEventListener("input", previous.handler);
+                        holder.removeEventListener("change", previous.handler);
+                        previous.observer?.disconnect();
+                    }
                     const onUrlChange = () => {
                         const val = holder.value ? holder.value.trim() : "";
                         if (val && val !== this.lastLoadedUrl) {
@@ -325,14 +336,18 @@
                     holder.addEventListener("change", onUrlChange);
                     const observer = new MutationObserver(onUrlChange);
                     observer.observe(holder, { attributes: true, childList: true, characterData: true, subtree: true });
+                    holder.__s2sBinding = { owner: this, handler: onUrlChange, observer };
+                    this.outputBindingHolder = holder;
+                    this.outputBindingBinding = holder.__s2sBinding;
                 }
             };
-            setInterval(checkBinding, 500);
+            this.outputBindingInterval = setInterval(checkBinding, 500);
+            checkBinding();
         }
 
         _loadThreeDependencies() {
             return new Promise((resolve, reject) => {
-                if (window.THREE && window.THREE.OrbitControls && window.THREE.GLTFLoader) {
+                if (window.THREE && window.THREE.OrbitControls && window.THREE.GLTFLoader && window.THREE.GLTFExporter) {
                     return resolve();
                 }
 
@@ -361,6 +376,7 @@
                     .then(() => Promise.all([
                         loadScript(this.options.cdnControlsUrl),
                         loadScript(this.options.cdnGltfLoaderUrl),
+                        loadScript(this.options.cdnGltfExporterUrl),
                         loadScript(this.options.cdnStlExporterUrl).catch(() => {}),
                     ]))
                     .then(() => resolve())
@@ -410,7 +426,7 @@
                 });
                 window.addEventListener("mouseup", () => {
                     this.dom.viewport.style.cursor = "grab";
-                });
+                }, { signal: this.eventController.signal });
             }
 
             const ambient = new THREE.HemisphereLight(0xf8fafc, 0x0f172a, 0.7);
@@ -463,7 +479,7 @@
                 this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
             };
 
-            window.addEventListener("resize", handleResize);
+            window.addEventListener("resize", handleResize, { signal: this.eventController.signal });
 
             if (typeof ResizeObserver !== "undefined") {
                 this.resizeObserver = new ResizeObserver(() => handleResize());
@@ -477,7 +493,7 @@
                     this.dom.fullscreenBtn.classList.toggle("active", this.isFullscreen);
                 }
                 setTimeout(handleResize, 100);
-            });
+            }, { signal: this.eventController.signal });
         }
 
         toggleFullscreen() {
@@ -521,10 +537,12 @@
 
         resetAsset() {
             this._clearModelGroup();
+            if (this.activeBlobUrl) URL.revokeObjectURL(this.activeBlobUrl);
             this.activeModel = null;
             this.activeBlob = null;
             this.activeBlobUrl = null;
             this.lastLoadedUrl = null;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = true;
             this.resetCamera();
             if (this.dom.emptyStage) {
                 this.dom.emptyStage.style.display = "flex";
@@ -617,6 +635,7 @@
                     this._frameModel(scene);
                     this.modelGroup.add(scene);
                     this.activeModel = scene;
+                    if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = false;
 
                     if (this.isWireframe) this.setWireframe(true);
 
@@ -646,6 +665,8 @@
                 },
                 (err) => {
                     console.error("[Sketch2ShapeViewer] Error loading GLB asset:", err);
+                    this.activeModel = null;
+                    if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = true;
                     this.hideLoading();
                     if (this.dom.statBadge) {
                         this.dom.statBadge.textContent = "GLB Load Failed";
@@ -727,6 +748,7 @@
             this._frameModel(mesh);
             this.modelGroup.add(mesh);
             this.activeModel = mesh;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = false;
 
             if (this.dom.statBadge) {
                 const count = geometry.attributes.position.count;
@@ -736,6 +758,10 @@
 
         downloadBinary() {
             if (this.isDownloading) return;
+            if (!this.activeModel && !this.activeBlob && !this.lastLoadedUrl) {
+                if (this.dom.statBadge) this.dom.statBadge.textContent = "No model is available to download.";
+                return;
+            }
             this.isDownloading = true;
 
             const icon = this.dom.downloadBtn.querySelector("#s2s-dl-icon");
@@ -801,14 +827,15 @@
         }
 
         _fallbackDownload() {
-            const glbContent = JSON.stringify({
-                asset: { version: "2.0", generator: "Sketch2Shape AI TechZephyr 4.0 Exporter" },
-                scenes: [{ nodes: [0] }],
-                nodes: [{ name: "Sketch2Shape_Mesh" }],
-            });
-            const blob = new Blob([glbContent], { type: "model/gltf-binary" });
-            this._triggerFileSave(blob, this.activeFilename);
-            this._resetDownloadButtonState();
+            this.isDownloading = false;
+            if (this.dom.downloadBtn) this.dom.downloadBtn.disabled = !this.activeModel;
+            if (this.dom.downloadSpinner) this.dom.downloadSpinner.style.display = "none";
+            const icon = this.dom.downloadBtn?.querySelector("#s2s-dl-icon");
+            if (icon) icon.style.display = "inline-block";
+            if (this.dom.statBadge) {
+                this.dom.statBadge.textContent = "GLB export is unavailable; no file was generated.";
+                this.dom.statBadge.style.color = "#ef4444";
+            }
         }
 
         downloadSTL() {
@@ -818,7 +845,10 @@
 
         exportSceneToSTL(filename = "sketch2shape_generated.stl") {
             const THREE = window.THREE;
-            if (!this.modelGroup) return;
+            if (!this.activeModel || !this.modelGroup) {
+                if (this.dom.statBadge) this.dom.statBadge.textContent = "Generate or load a model before exporting STL.";
+                return;
+            }
 
             // 1. Native THREE.STLExporter if available
             if (THREE && window.THREE.STLExporter) {
@@ -971,6 +1001,19 @@
         }
 
         destroy() {
+            if (this.outputBindingInterval) {
+                clearInterval(this.outputBindingInterval);
+                this.outputBindingInterval = null;
+            }
+            if (this.outputBindingBinding && this.outputBindingHolder?.__s2sBinding === this.outputBindingBinding) {
+                this.outputBindingHolder.removeEventListener("input", this.outputBindingBinding.handler);
+                this.outputBindingHolder.removeEventListener("change", this.outputBindingBinding.handler);
+                this.outputBindingBinding.observer?.disconnect();
+                delete this.outputBindingHolder.__s2sBinding;
+            }
+            this.outputBindingHolder = null;
+            this.outputBindingBinding = null;
+            this.eventController.abort();
             if (this.animationFrameId) {
                 cancelAnimationFrame(this.animationFrameId);
             }
