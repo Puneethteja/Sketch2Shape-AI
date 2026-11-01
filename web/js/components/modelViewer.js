@@ -1,7 +1,13 @@
-/**
- * Sketch2Shape AI — 3D WebGL Model Viewer Component
- * High-performance Three.js OrbitControls Viewport with Wireframe, Lighting, and Procedural/GLTF Mesh Loaders
- */
+const MATERIAL_DEFS = {
+  porcelain: { color: 0xf8fafc, roughness: 0.15, metalness: 0.05, name: "Porcelain" },
+  gold: { color: 0xf59e0b, roughness: 0.22, metalness: 0.95, name: "Brushed Gold" },
+  titanium: { color: 0x94a3b8, roughness: 0.35, metalness: 0.85, name: "Titanium" },
+  walnut: { color: 0x78350f, roughness: 0.70, metalness: 0.08, name: "Walnut Wood" },
+  terracotta: { color: 0xc2410c, roughness: 0.85, metalness: 0.04, name: "Terracotta" },
+  glass: { color: 0x38bdf8, roughness: 0.10, metalness: 0.15, transparent: true, opacity: 0.75, name: "Frosted Glass" },
+  obsidian: { color: 0x0f172a, roughness: 0.12, metalness: 0.80, name: "Obsidian" },
+  coral: { color: 0xfb7185, roughness: 0.38, metalness: 0.15, name: "Pastel Coral" }
+};
 
 export class ModelViewer {
   constructor(containerElement, options = {}) {
@@ -20,6 +26,7 @@ export class ModelViewer {
     this.activeMesh = null;
     this.gridHelper = null;
     this.animationFrameId = null;
+    this.currentMaterial = options.material || "porcelain";
 
     this.init();
   }
@@ -37,15 +44,12 @@ export class ModelViewer {
     const width = this.container.clientWidth || 480;
     const height = this.container.clientHeight || 480;
 
-    // Scene
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#090d16");
 
-    // Camera
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
     this.camera.position.set(0, 1.4, 2.8);
 
-    // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -53,7 +57,6 @@ export class ModelViewer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
-    // Controls
     if (typeof THREE.OrbitControls !== "undefined") {
       this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
       this.controls.enableDamping = true;
@@ -63,7 +66,6 @@ export class ModelViewer {
       this.controls.target.set(0, 0, 0);
     }
 
-    // Studio Lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     this.scene.add(ambientLight);
 
@@ -76,21 +78,17 @@ export class ModelViewer {
     dirLight2.position.set(-3, -2, -2);
     this.scene.add(dirLight2);
 
-    // Grid
     if (this.options.showGrid) {
       this.gridHelper = new THREE.GridHelper(4, 20, 0x06b6d4, 0x1e293b);
       this.gridHelper.position.y = -0.65;
       this.scene.add(this.gridHelper);
     }
 
-    // Default procedural geometry
     this.loadProceduralShape("vase");
 
-    // Resize Observer
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(this.container);
 
-    // Render loop
     this.animate = this.animate.bind(this);
     this.animate();
   }
@@ -129,17 +127,37 @@ export class ModelViewer {
     }
   }
 
+  getMaterialInstance(key = null) {
+    const matKey = key || this.currentMaterial || "porcelain";
+    const def = MATERIAL_DEFS[matKey] || MATERIAL_DEFS.porcelain;
+    return new THREE.MeshStandardMaterial({
+      color: def.color,
+      roughness: def.roughness,
+      metalness: def.metalness,
+      wireframe: this.options.wireframe,
+      transparent: Boolean(def.transparent),
+      opacity: def.opacity !== undefined ? def.opacity : 1.0
+    });
+  }
+
+  setMaterial(materialKey) {
+    if (!MATERIAL_DEFS[materialKey]) return;
+    this.currentMaterial = materialKey;
+    if (this.activeMesh) {
+      const newMat = this.getMaterialInstance(materialKey);
+      this.activeMesh.traverse((child) => {
+        if (child.isMesh) {
+          child.material = newMat;
+        }
+      });
+    }
+  }
+
   loadProceduralShape(type = "vase") {
     this.clearActiveMesh();
 
     let geometry;
-    const matOptions = {
-      color: 0x06b6d4,
-      metalness: 0.25,
-      roughness: 0.35,
-      wireframe: this.options.wireframe,
-    };
-    const material = new THREE.MeshStandardMaterial(matOptions);
+    const material = this.getMaterialInstance();
 
     if (type === "vase") {
       const points = [];
@@ -184,7 +202,6 @@ export class ModelViewer {
         this.clearActiveMesh();
         const model = gltf.scene;
 
-        // Auto center and scale
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
@@ -207,7 +224,7 @@ export class ModelViewer {
       },
       undefined,
       (error) => {
-        console.warn("[ModelViewer] GLB load fallback to procedural shape:", error);
+        this.loadProceduralShape("vase");
       }
     );
   }

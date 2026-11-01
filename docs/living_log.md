@@ -805,3 +805,25 @@ Overhauled the Web SPA frontend layout, styling tokens, and interaction models t
    - Enhanced toast alerts, progress loaders, and status pills with glow shadows and crisp borders.
 4. **Zero-Breakage Functional Integrity**:
    - Maintained all DOM component IDs, event bindings, and route navigation paths without alteration.
+
+---
+
+### Phase 8 - Left Sidebar Dashboard Layout & Interactive Material Palette
+- **Owner**: Laxmi (Lead Frontend, WebGL & Technical Documentation Engineer)
+- **Status**: Completed
+- **Date**: 2026-11-01
+- **Branch**: `feature/frontend-design-system-refactor`
+
+#### Executive Summary
+Refactored the application architecture to a sleek left-sidebar dashboard layout, re-introduced a tactile 3D material/surface finish selection palette, and streamlined the input controls by removing raw inference sliders and hackathon header tags.
+
+#### Key Enhancements
+1. **Left-Sidebar Navigation Layout**:
+   - Relocated navigation elements (Studio, 3D Gallery, Architecture, Benchmarks, Settings) from the top bar to a dedicated sticky vertical sidebar.
+   - Integrated brand identity with active manifold engine status and theme toggle button at the sidebar base.
+2. **Interactive 3D Material Palette**:
+   - Re-added full material palette with 8 tactile finish presets: Porcelain, Brushed Gold, Titanium, Walnut Wood, Terracotta, Frosted Glass, Obsidian, and Pastel Coral.
+   - Bound directly to Three.js `MeshStandardMaterial` for real-time viewport shading updates (color, roughness, metalness, and transparency).
+3. **Workflow Streamlining & Copy Cleanup**:
+   - Removed raw technical sliders (ControlNet Scale and Inference Steps) to simplify user interaction.
+   - Cleared hackathon header markers for a polished enterprise SaaS presentation.

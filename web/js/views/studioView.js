@@ -1,15 +1,22 @@
-/**
- * Sketch2Shape AI — Studio View
- * Primary 2D Sketchpad to 3D Generation Interface
- */
-
 import { store } from "../state.js";
 import { CanvasEditor } from "../components/canvasEditor.js";
 import { ModelViewer } from "../components/modelViewer.js";
 
+const MATERIAL_PRESETS = [
+  { key: "porcelain", name: "Porcelain", desc: "smooth glossy white porcelain ceramic with delicate glaze", bg: "#f8fafc", border: "#cbd5e1" },
+  { key: "gold", name: "Gold", desc: "luxurious brushed 24k gold metal with warm specular sheen", bg: "linear-gradient(135deg, #fbbf24, #d97706)" },
+  { key: "titanium", name: "Titanium", desc: "aerospace-grade matte brushed titanium alloy with satin reflections", bg: "linear-gradient(135deg, #94a3b8, #475569)" },
+  { key: "walnut", name: "Walnut", desc: "hand-rubbed organic polished walnut wood with natural grain", bg: "linear-gradient(135deg, #92400e, #451a03)" },
+  { key: "terracotta", name: "Terracotta", desc: "matte artisanal baked terracotta clay with earthy texture", bg: "linear-gradient(135deg, #ea580c, #9a3412)" },
+  { key: "glass", name: "Glass", desc: "translucent frosted glass with soft subsurface scattering", bg: "linear-gradient(135deg, #38bdf8, #0284c7)" },
+  { key: "obsidian", name: "Obsidian", desc: "glossy volcanic black obsidian with mirror reflections", bg: "linear-gradient(135deg, #334155, #020617)" },
+  { key: "coral", name: "Coral", desc: "smooth satin pastel coral polymer clay", bg: "linear-gradient(135deg, #fb7185, #e11d48)" }
+];
+
 export function createStudioView() {
   let canvasEditor = null;
   let modelViewer = null;
+  let activeMaterial = "porcelain";
 
   return {
     async render() {
@@ -19,8 +26,7 @@ export function createStudioView() {
       return `
         <div class="studio-container">
           <div class="studio-grid">
-            <!-- Left Column: 2D Sketchpad & Controls -->
-            <div class="panel-card">
+            <div class="panel-card card-elevated">
               <div class="panel-header">
                 <div class="panel-title-wrap">
                   <span style="font-size: 18px;">✏️</span>
@@ -32,7 +38,6 @@ export function createStudioView() {
                 <span class="badge badge-cyan">Canvas 512×512</span>
               </div>
 
-              <!-- Canvas Toolbar -->
               <div class="canvas-toolbar">
                 <div class="tool-group">
                   <button id="tool-brush" class="tool-btn active" title="Brush Tool">🖌️ Brush</button>
@@ -52,12 +57,10 @@ export function createStudioView() {
                 </div>
               </div>
 
-              <!-- Canvas Wrap with Dropzone -->
               <div id="canvas-dropzone" class="canvas-viewport-wrap">
                 <canvas id="studio-canvas" class="sketch-canvas"></canvas>
               </div>
 
-              <!-- Quick File Upload Drop Indicator -->
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
                 <label for="file-upload" class="btn btn-secondary btn-sm" style="cursor: pointer; width: 100%;">
                   📂 Upload Image / Photo (.png, .jpg)
@@ -65,35 +68,32 @@ export function createStudioView() {
                 <input id="file-upload" type="file" accept=".png,.jpg,.jpeg" style="display: none;">
               </div>
 
-              <!-- Parameters & Prompt -->
-              <div class="form-group" style="margin-top: 6px;">
+              <div class="form-group" style="margin-top: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label class="form-label" style="margin-bottom: 0;">
+                    <span>🎨 Material & Surface Palette</span>
+                  </label>
+                  <span id="active-material-badge" class="badge badge-cyan">Porcelain</span>
+                </div>
+                <div class="material-grid" id="material-presets-grid">
+                  ${MATERIAL_PRESETS.map((m) => `
+                    <button type="button" class="material-btn ${m.key === 'porcelain' ? 'active' : ''}" data-material="${m.key}" data-desc="${m.desc}" title="${m.name}: ${m.desc}">
+                      <span class="material-swatch" style="background: ${m.bg}; ${m.border ? `border: 1px solid ${m.border};` : ''}"></span>
+                      <span class="material-label">${m.name}</span>
+                    </button>
+                  `).join("")}
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top: 10px;">
                 <label class="form-label" for="prompt-input">
                   <span>Material & Style Prompt (Optional)</span>
-                  <span style="font-size: 10px; color: var(--accent-cyan);">e.g. porcelain, wood, matte titanium</span>
+                  <span style="font-size: 10px; color: var(--accent-cyan);">Click any material above to sync</span>
                 </label>
-                <textarea id="prompt-input" class="form-textarea" rows="2" placeholder="e.g. clean matte ceramic finish with smooth glazed surface...">${params.prompt}</textarea>
+                <textarea id="prompt-input" class="form-textarea" rows="2" placeholder="e.g. clean matte ceramic finish with smooth glazed surface...">${params.prompt || MATERIAL_PRESETS[0].desc}</textarea>
               </div>
 
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                <div class="form-group">
-                  <label class="form-label" for="param-cn-scale">
-                    <span>ControlNet Scale</span>
-                    <span id="cn-scale-val" style="font-family: var(--font-mono); color: var(--accent-cyan);">${params.controlnetScale}</span>
-                  </label>
-                  <input id="param-cn-scale" type="range" class="form-range" min="0.5" max="1.5" step="0.05" value="${params.controlnetScale}">
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label" for="param-steps">
-                    <span>Inference Steps</span>
-                    <span id="steps-val" style="font-family: var(--font-mono); color: var(--accent-cyan);">${params.inferenceSteps}</span>
-                  </label>
-                  <input id="param-steps" type="range" class="form-range" min="10" max="60" step="5" value="${params.inferenceSteps}">
-                </div>
-              </div>
-
-              <!-- Action Buttons -->
-              <div style="display: flex; gap: 10px; margin-top: 4px;">
+              <div style="display: flex; gap: 10px; margin-top: 8px;">
                 <button id="btn-preprocess" class="btn btn-secondary" style="flex: 1;">
                   ⚙️ Preprocess Lineart
                 </button>
@@ -103,8 +103,7 @@ export function createStudioView() {
               </div>
             </div>
 
-            <!-- Right Column: Interactive 3D WebGL Viewport -->
-            <div class="panel-card">
+            <div class="panel-card card-elevated">
               <div class="panel-header">
                 <div class="panel-title-wrap">
                   <span style="font-size: 18px;">🌐</span>
@@ -118,102 +117,141 @@ export function createStudioView() {
                 </div>
               </div>
 
-              <!-- 3D Viewport Root Container -->
-              <div class="webgl-viewport-wrap">
-                <div id="studio-model-viewer" class="webgl-canvas-container"></div>
-
-                <!-- Live Progress Simulation Overlay -->
-                <div id="generation-overlay" class="viewport-progress-overlay" style="display: none;">
-                  <div class="spinner"></div>
-                  <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
-                    <div id="gen-stage-label" class="progress-text">Initializing AI Synthesis Pipeline...</div>
-                    <div style="width: 180px; height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden;">
-                      <div id="gen-progress-bar" style="width: 0%; height: 100%; background: var(--accent-cyan); transition: width 0.3s ease;"></div>
-                    </div>
-                  </div>
+              <div class="viewport-toolbar">
+                <div class="tool-group">
+                  <button id="btn-vp-wireframe" class="tool-btn" title="Toggle wireframe topology">🕸️ Wireframe</button>
+                  <button id="btn-vp-autorotate" class="tool-btn" title="Auto orbital rotate">🔄 Orbit</button>
+                  <button id="btn-vp-reset" class="tool-btn" title="Reset camera viewpoint">🎯 Reset</button>
                 </div>
 
-                <!-- Mesh Statistics Floating Badge -->
-                <div class="webgl-overlay-stats">
-                  <div>Model: <span id="stat-model-name" style="color: var(--text-primary);">Minimalist Ceramic Vase</span></div>
-                  <div>Vertices: <span id="stat-vertices" style="color: var(--accent-cyan);">2,184</span> | Faces: <span id="stat-faces" style="color: var(--accent-cyan);">4,368</span></div>
-                  <div>Latency: <span id="stat-latency" style="color: var(--accent-emerald);">6.84s</span> (FP16 StageLinker)</div>
-                </div>
-
-                <!-- Viewport Control Toolbar -->
-                <div class="webgl-toolbar">
-                  <button id="btn-vp-wireframe" class="tool-btn" title="Toggle Wireframe">🕸️ Wire</button>
-                  <button id="btn-vp-autorotate" class="tool-btn" title="Toggle Auto-Rotation">🔄 Rotate</button>
-                  <button id="btn-vp-reset" class="tool-btn" title="Reset View">🎯 Reset</button>
+                <div class="tool-group">
+                  <span class="viewport-stat-chip">
+                    <span id="stat-model-name" style="color: var(--accent-cyan); font-weight: 600;">Ceramic Vase</span>
+                  </span>
                 </div>
               </div>
 
-              <!-- Mesh Export Bar -->
-              <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 10px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); gap: 10px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">Export:</span>
-                  <select id="export-format" class="form-select" style="padding: 4px 8px; font-size: 12px; width: auto;">
-                    <option value="glb">GLB (Binary 3D)</option>
-                    <option value="obj">OBJ (Wavefront)</option>
-                    <option value="stl">STL (3D Print)</option>
-                    <option value="ply">PLY (Point Cloud)</option>
+              <div class="model-viewport-wrap">
+                <div id="studio-webgl-container" class="webgl-canvas-container"></div>
+
+                <div id="generation-overlay" class="generation-overlay" style="display: none;">
+                  <div class="spinner-large"></div>
+                  <div class="overlay-title">Synthesizing 3D Geometry</div>
+                  <div id="gen-stage-label" class="overlay-stage">Executing Neural Handoff...</div>
+                  <div class="progress-bar-wrap">
+                    <div id="gen-progress-bar" class="progress-bar-fill"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="intermediate-previews">
+                <div class="preview-mini-card">
+                  <span class="preview-mini-title">Stage 1 Lineart</span>
+                  <div id="preview-lineart-box" class="preview-mini-box">
+                    <span style="font-size: 10px; color: var(--text-muted);">Awaiting Run</span>
+                  </div>
+                </div>
+                <div class="preview-mini-card">
+                  <span class="preview-mini-title">Stage 2 Diffusion</span>
+                  <div id="preview-depth-box" class="preview-mini-box">
+                    <span style="font-size: 10px; color: var(--text-muted);">Awaiting Run</span>
+                  </div>
+                </div>
+                <div class="preview-mini-card">
+                  <span class="preview-mini-title">Stage 3 Volumetric</span>
+                  <div class="preview-mini-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+                    <span style="font-size: 11px; font-weight: 700; color: var(--accent-emerald);">512³ Grid</span>
+                    <span style="font-size: 9px; color: var(--text-muted);">FP16 Tensors</span>
+                  </div>
+                </div>
+                <div class="preview-mini-card">
+                  <span class="preview-mini-title">Stage 4 Manifold</span>
+                  <div class="preview-mini-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+                    <span style="font-size: 11px; font-weight: 700; color: var(--accent-cyan);">7-Step Repair</span>
+                    <span style="font-size: 9px; color: var(--accent-emerald);">Zero Holes</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mesh-stats-bar">
+                <div class="stat-pill">
+                  <span class="stat-pill-label">Vertices</span>
+                  <span id="stat-vertices" class="stat-pill-val">2,184</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-pill-label">Faces</span>
+                  <span id="stat-faces" class="stat-pill-val">4,368</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-pill-label">Topology</span>
+                  <span class="stat-pill-val" style="color: var(--accent-emerald);">Closed Manifold</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-pill-label">Format</span>
+                  <span class="stat-pill-val">GLTF / GLB 2.0</span>
+                </div>
+              </div>
+
+              <div class="export-tray">
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <span style="font-size: 12px; color: var(--text-secondary);">Format:</span>
+                  <select id="export-format" class="form-select" style="width: 90px; padding: 6px 10px; font-size: 12px;">
+                    <option value="glb" selected>GLB</option>
+                    <option value="obj">OBJ</option>
+                    <option value="stl">STL</option>
                   </select>
                 </div>
 
                 <div style="display: flex; gap: 8px;">
-                  <button id="btn-export-download" class="btn btn-secondary btn-sm">
-                    ⬇️ Download Asset
+                  <button id="btn-save-gallery" class="btn btn-secondary btn-sm" title="Save snapshot to Gallery">
+                    💾 Save Asset
                   </button>
-                  <button id="btn-save-gallery" class="btn btn-primary btn-sm">
-                    ⭐ Save to Gallery
+                  <button id="btn-export-download" class="btn btn-primary btn-sm" title="Download 3D model asset">
+                    ⬇️ Download Mesh
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
 
-              <!-- Intermediate Prior Previews -->
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                <div style="background: var(--bg-secondary); padding: 8px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); text-align: center;">
-                  <span style="font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Stage 1: Lineart Mask</span>
-                  <div id="preview-lineart-box" style="margin-top: 6px; aspect-ratio: 16/9; background: #000; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #64748b; overflow: hidden;">
-                    <span>Lineart preview</span>
-                  </div>
-                </div>
-
-                <div style="background: var(--bg-secondary); padding: 8px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); text-align: center;">
-                  <span style="font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Stage 2: Depth Prior</span>
-                  <div id="preview-depth-box" style="margin-top: 6px; aspect-ratio: 16/9; background: #090d16; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #64748b; overflow: hidden;">
-                    <span>Depth map preview</span>
-                  </div>
+          <div class="preset-strip-wrap card-elevated" style="margin-top: 20px;">
+            <div class="panel-header" style="padding-bottom: 8px; margin-bottom: 12px;">
+              <div class="panel-title-wrap">
+                <span style="font-size: 16px;">📚</span>
+                <div>
+                  <h3 class="panel-title" style="font-size: 14px;">Instant Curated Sketch Presets</h3>
+                  <span style="font-size: 11px; color: var(--text-muted);">Click any benchmark sketch to instantly populate the canvas & 3D mesh</span>
                 </div>
               </div>
+            </div>
 
+            <div class="preset-strip-grid">
+              ${state.samples.map(sample => `
+                <div class="preset-thumb-card" data-sample-id="${sample.id}">
+                  <div class="preset-img-wrap">
+                    <img src="${sample.sketchPath}" alt="${sample.title}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'100\\' height=\\'100\\' fill=\\'%23334155\\'><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'white\\'>Sketch</text></svg>'">
+                    <span class="badge badge-cyan" style="position: absolute; bottom: 4px; right: 4px; font-size: 9px; padding: 2px 6px;">${sample.category}</span>
+                  </div>
+                  <div class="preset-card-title">${sample.title}</div>
+                </div>
+              `).join("")}
             </div>
           </div>
         </div>
       `;
     },
 
-    afterRender() {
-      // 1. Initialize Canvas Editor
+    async afterRender() {
       const canvasEl = document.getElementById("studio-canvas");
       if (canvasEl) {
-        canvasEditor = new CanvasEditor(canvasEl, { width: 512, height: 512 });
-
-        const btnUndo = document.getElementById("btn-undo");
-        const btnRedo = document.getElementById("btn-redo");
-        canvasEditor.onHistoryChange = ({ canUndo, canRedo }) => {
-          if (btnUndo) btnUndo.disabled = !canUndo;
-          if (btnRedo) btnRedo.disabled = !canRedo;
-        };
+        canvasEditor = new CanvasEditor(canvasEl);
       }
 
-      // 2. Initialize Model Viewer
-      const viewerContainer = document.getElementById("studio-model-viewer");
-      if (viewerContainer) {
-        modelViewer = new ModelViewer(viewerContainer, { autoRotate: false });
+      const webglContainer = document.getElementById("studio-webgl-container");
+      if (webglContainer) {
+        modelViewer = new ModelViewer(webglContainer, { material: activeMaterial });
       }
 
-      // 3. Canvas Tools Bindings
       const toolBrush = document.getElementById("tool-brush");
       const toolEraser = document.getElementById("tool-eraser");
       const brushSize = document.getElementById("brush-size");
@@ -222,20 +260,24 @@ export function createStudioView() {
       const btnUndo = document.getElementById("btn-undo");
       const btnRedo = document.getElementById("btn-redo");
 
-      if (toolBrush) {
+      if (toolBrush && toolEraser) {
         toolBrush.addEventListener("click", () => {
-          canvasEditor.mode = "brush";
+          canvasEditor.setMode("brush");
           toolBrush.classList.add("active");
           toolEraser.classList.remove("active");
         });
-      }
-
-      if (toolEraser) {
         toolEraser.addEventListener("click", () => {
-          canvasEditor.mode = "eraser";
+          canvasEditor.setMode("eraser");
           toolEraser.classList.add("active");
           toolBrush.classList.remove("active");
         });
+      }
+
+      if (canvasEditor) {
+        canvasEditor.onStrokeChange = (canUndo, canRedo) => {
+          if (btnUndo) btnUndo.disabled = !canUndo;
+          if (btnRedo) btnRedo.disabled = !canRedo;
+        };
       }
 
       if (brushSize) {
@@ -256,7 +298,6 @@ export function createStudioView() {
       if (btnUndo) btnUndo.addEventListener("click", () => canvasEditor.undo());
       if (btnRedo) btnRedo.addEventListener("click", () => canvasEditor.redo());
 
-      // File Upload & Drag-and-Drop
       const fileInput = document.getElementById("file-upload");
       if (fileInput) {
         fileInput.addEventListener("change", async (e) => {
@@ -288,25 +329,6 @@ export function createStudioView() {
         });
       }
 
-      // 4. Parameter Sliders Binding
-      const cnScale = document.getElementById("param-cn-scale");
-      const cnScaleVal = document.getElementById("cn-scale-val");
-      if (cnScale) {
-        cnScale.addEventListener("input", (e) => {
-          if (cnScaleVal) cnScaleVal.textContent = e.target.value;
-          store.setParams({ controlnetScale: parseFloat(e.target.value) });
-        });
-      }
-
-      const stepsInput = document.getElementById("param-steps");
-      const stepsVal = document.getElementById("steps-val");
-      if (stepsInput) {
-        stepsInput.addEventListener("input", (e) => {
-          if (stepsVal) stepsVal.textContent = e.target.value;
-          store.setParams({ inferenceSteps: parseInt(e.target.value, 10) });
-        });
-      }
-
       const promptInput = document.getElementById("prompt-input");
       if (promptInput) {
         promptInput.addEventListener("input", (e) => {
@@ -314,7 +336,29 @@ export function createStudioView() {
         });
       }
 
-      // 5. Viewport Control Buttons
+      const matButtons = document.querySelectorAll(".material-btn");
+      const matBadge = document.getElementById("active-material-badge");
+      matButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          matButtons.forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          const matKey = btn.getAttribute("data-material");
+          const matDesc = btn.getAttribute("data-desc");
+          const matLabel = btn.querySelector(".material-label")?.textContent || matKey;
+
+          activeMaterial = matKey;
+          if (matBadge) matBadge.textContent = matLabel;
+          if (modelViewer) modelViewer.setMaterial(matKey);
+
+          if (promptInput) {
+            promptInput.value = matDesc;
+            store.setParams({ prompt: matDesc });
+          }
+
+          store.showToast(`Applied ${matLabel} surface material`, "info", 1500);
+        });
+      });
+
       const btnWire = document.getElementById("btn-vp-wireframe");
       let isWire = false;
       if (btnWire) {
@@ -340,7 +384,6 @@ export function createStudioView() {
         btnReset.addEventListener("click", () => modelViewer.resetCamera());
       }
 
-      // 6. Preprocess Action
       const btnPreprocess = document.getElementById("btn-preprocess");
       if (btnPreprocess) {
         btnPreprocess.addEventListener("click", () => {
@@ -357,7 +400,6 @@ export function createStudioView() {
         });
       }
 
-      // 7. Generate 3D Asset Action (Simulated Pipeline Flow with Reactive Updates)
       const btnGenerate = document.getElementById("btn-generate-3d");
       const overlay = document.getElementById("generation-overlay");
       const stageLabel = document.getElementById("gen-stage-label");
@@ -404,12 +446,13 @@ export function createStudioView() {
             updateProgress(98, "Stage 4: Closed Manifold Topology Repair...");
             await new Promise(r => setTimeout(r, 500));
 
-            // Select shape based on prompt or random
             const shapes = ["vase", "cylinder", "box", "cone", "sphere"];
             const chosen = shapes[Math.floor(Math.random() * shapes.length)];
             const stats = modelViewer.loadProceduralShape(chosen);
+            if (activeMaterial && modelViewer.setMaterial) {
+              modelViewer.setMaterial(activeMaterial);
+            }
 
-            // Update stats
             const vCount = document.getElementById("stat-vertices");
             const fCount = document.getElementById("stat-faces");
             const mName = document.getElementById("stat-model-name");
@@ -425,12 +468,10 @@ export function createStudioView() {
         });
       }
 
-      // 8. Export and Save Actions
       const btnExport = document.getElementById("btn-export-download");
       if (btnExport) {
         btnExport.addEventListener("click", () => {
           const fmt = document.getElementById("export-format").value;
-          // Trigger download of existing sample
           const a = document.createElement("a");
           a.href = `../outputs/samples/sample_01_vase/model.${fmt === "obj" ? "obj" : "glb"}`;
           a.download = `sketch2shape_generated.${fmt}`;
@@ -455,13 +496,52 @@ export function createStudioView() {
             latency: "6.92s",
             glbPath: "../outputs/samples/sample_01_vase/model.glb",
             sketchPath: canvasEditor.toDataURL(),
-            description: "User-authored custom sketch synthesized into 3D mesh.",
+            description: `User-authored custom sketch synthesized into 3D mesh with ${activeMaterial} material.`,
             shapeType: "vase"
           };
           store.addGeneratedAsset(newAsset);
           store.showToast("Saved asset to 3D Gallery!", "success");
         });
       }
+
+      const presetCards = document.querySelectorAll(".preset-thumb-card");
+      presetCards.forEach((card) => {
+        card.addEventListener("click", async () => {
+          const sampleId = card.getAttribute("data-sample-id");
+          const samples = store.getState().samples;
+          const sample = samples.find(s => s.id === sampleId);
+          if (!sample) return;
+
+          await canvasEditor.loadImageFromURL(sample.sketchPath);
+
+          if (promptInput) {
+            promptInput.value = sample.description;
+            store.setParams({ prompt: sample.description });
+          }
+
+          if (sample.shapeType) {
+            const stats = modelViewer.loadProceduralShape(sample.shapeType);
+            if (activeMaterial) modelViewer.setMaterial(activeMaterial);
+            const vCount = document.getElementById("stat-vertices");
+            const fCount = document.getElementById("stat-faces");
+            const mName = document.getElementById("stat-model-name");
+            if (vCount) vCount.textContent = (sample.vertices || stats.vertices).toLocaleString();
+            if (fCount) fCount.textContent = (sample.faces || stats.faces).toLocaleString();
+            if (mName) mName.textContent = sample.title;
+          } else if (sample.glbPath) {
+            modelViewer.loadGLB(sample.glbPath);
+            const mName = document.getElementById("stat-model-name");
+            if (mName) mName.textContent = sample.title;
+          }
+
+          const lineartBox = document.getElementById("preview-lineart-box");
+          if (lineartBox && sample.lineartPath) {
+            lineartBox.innerHTML = `<img src="${sample.lineartPath}" style="width:100%;height:100%;object-fit:contain;">`;
+          }
+
+          store.showToast(`Loaded preset: "${sample.title}"`, "info", 2000);
+        });
+      });
     },
 
     destroy() {
