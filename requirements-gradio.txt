@@ -1,0 +1,3 @@
+# Optional legacy Gradio interface; install with the local generator stack.
+-r requirements-local.txt
+gradio>=4.20

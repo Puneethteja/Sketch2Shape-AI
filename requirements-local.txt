@@ -1,0 +1,9 @@
+# Optional local Diffusers generator. This exceeds the 500 MB hosted-runtime budget.
+-r requirements-backend.txt
+torch>=2.1
+torchvision>=0.16
+diffusers>=0.27
+transformers>=4.38
+accelerate>=0.28
+huggingface-hub>=0.22
+rembg>=2.0.50

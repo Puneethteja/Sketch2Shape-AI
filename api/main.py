@@ -812,10 +812,8 @@ async def preview(
 
         elif mode_lc == "normal":
             # Synthetic normal map: encode surface gradient as RGB
-            from scipy.ndimage import sobel  # type: ignore
             gray = np.mean(arr, axis=2)
-            gx = sobel(gray, axis=1)
-            gy = sobel(gray, axis=0)
+            gy, gx = np.gradient(gray)
             gz = np.ones_like(gray) * 128.0
             length = np.sqrt(gx**2 + gy**2 + gz**2) + 1e-8
             nx = (gx / length * 127.5 + 127.5).clip(0, 255)
