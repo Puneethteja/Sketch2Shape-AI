@@ -58,6 +58,13 @@ except ImportError:
     MultiViewSynthesizer = None
     MultiViewResult = None
 
+try:
+    from engine.texture import TextureProjector
+    _TEXTURE_AVAILABLE = True
+except ImportError:
+    _TEXTURE_AVAILABLE = False
+    TextureProjector = None
+
 import math
 
 logging.basicConfig(
@@ -104,6 +111,15 @@ class MeshReconstructor:
                 logger.info("MultiViewSynthesizer initialized (6 canonical camera angles)")
             except Exception as exc:
                 logger.warning(f"MultiViewSynthesizer init skipped: {exc}")
+
+        self._texture_projector = None
+        if _TEXTURE_AVAILABLE:
+            try:
+                self._texture_projector = TextureProjector()
+                logger.info("TextureProjector initialized (UV texture mapping & color preservation pass active)")
+            except Exception as exc:
+                logger.warning(f"TextureProjector init skipped: {exc}")
+
         self._initialize_backbone()
 
     def _resolve_device(self, requested_device: str) -> str:
@@ -293,12 +309,29 @@ class MeshReconstructor:
             except Exception as exc:
                 logger.warning(f"Triplane mesh build failed ({exc}), falling back to geometry engine")
 
-        return UniversalGeometryEngine.generate(
+        geom_mesh = UniversalGeometryEngine.generate(
             image_input=image_rgb,
             depth_map=depth_map,
             prompt=prompt,
             sketch_input=sketch_input,
         )
+        if self._texture_projector is not None and hasattr(geom_mesh, "vertices") and len(geom_mesh.vertices) > 0:
+            try:
+                views_to_use = getattr(multi_view_result, "views", [image_rgb]) if multi_view_result else [image_rgb]
+                masks_to_use = getattr(multi_view_result, "foreground_masks", None) if multi_view_result else None
+                tex_res = self._texture_projector.project_texture_pass(
+                    vertices=geom_mesh.vertices,
+                    faces=geom_mesh.faces,
+                    reference_image=image_rgb,
+                    multiview_views=views_to_use,
+                    multiview_masks=masks_to_use,
+                )
+                geom_mesh.vertex_colors = tex_res.vertex_colors
+                geom_mesh.uv_coordinates = tex_res.uv_coordinates
+                geom_mesh.texture_atlas = tex_res.texture_atlas
+            except Exception as exc:
+                logger.warning(f"Texture projection fallback warning: {exc}")
+        return geom_mesh
 
     def _build_triplane_mesh(
         self,
@@ -411,17 +444,43 @@ class MeshReconstructor:
 
         faces = np.array(faces, dtype=np.int32)
 
+        uvs = None
+        atlas = None
+        if self._texture_projector is not None:
+            try:
+                tex_res = self._texture_projector.project_texture_pass(
+                    vertices=verts,
+                    faces=faces,
+                    reference_image=front_img,
+                    multiview_views=views,
+                    multiview_masks=masks,
+                )
+                colors = tex_res.vertex_colors
+                uvs = tex_res.uv_coordinates
+                atlas = tex_res.texture_atlas
+            except Exception as exc:
+                logger.warning(f"Texture projection pass warning: {exc}")
+
         if TRIMESH_AVAILABLE:
-            return trimesh.Trimesh(
+            m = trimesh.Trimesh(
                 vertices=verts,
                 faces=faces,
                 vertex_colors=colors,
                 process=False,
             )
+            if uvs is not None:
+                try:
+                    m.visual.uv = uvs
+                except Exception:
+                    pass
+            return m
+
         return TrimeshFallback(
             vertices=verts,
             faces=faces,
             vertex_colors=colors,
+            uv_coordinates=uvs,
+            texture_atlas=atlas,
             is_watertight=True,
         )
 

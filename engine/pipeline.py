@@ -94,6 +94,10 @@ class GenerationResult:
     handoff_metadata: Optional[Dict[str, Any]] = None
     glb_path: Optional[str] = None
     multiview_grid: Optional[Image.Image] = None
+    texture_atlas: Optional[Image.Image] = None
+    color_fidelity_score: float = 1.0
+    has_uv_texture: bool = False
+    gltf_path: Optional[str] = None
 
     @property
     def is_watertight(self) -> bool:
@@ -353,6 +357,16 @@ class Sketch2ShapePipeline:
         )
         logger.info("=" * 70)
 
+        # Extract texture and color fidelity telemetry
+        atlas_img = getattr(watertight_mesh, "texture_atlas", None)
+        has_uv = getattr(watertight_mesh, "uv_coordinates", None) is not None
+        if hasattr(watertight_mesh, "vertex_colors") and len(watertight_mesh.vertex_colors) > 0:
+            c_arr = watertight_mesh.vertex_colors[:, :3].astype(np.float32)
+            mean_sat = float(np.mean(c_arr.max(axis=-1) - c_arr.min(axis=-1)))
+            fidelity = float(np.clip(mean_sat / 128.0, 0.45, 1.0))
+        else:
+            fidelity = 1.0
+
         return GenerationResult(
             depth_map=depth_map,
             normal_map=normal_map,
@@ -365,6 +379,9 @@ class Sketch2ShapePipeline:
             handoff_metadata=handoff.metadata,
             glb_path=glb_path_exported,
             multiview_grid=mv_grid,
+            texture_atlas=atlas_img,
+            color_fidelity_score=fidelity,
+            has_uv_texture=has_uv,
         )
 
     def _preprocess_input(self, source: Any) -> Image.Image:
