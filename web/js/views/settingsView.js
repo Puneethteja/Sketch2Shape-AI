@@ -75,9 +75,12 @@ export function createSettingsView() {
 
             <div style="margin-top: 16px; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
               <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-size: 12px; font-weight: 600;">Gradio Backend Server (Port 7860)</span>
-                <span id="backend-status-badge" class="badge badge-success">● Connected (HTTP 200)</span>
+                <span style="font-size: 12px; font-weight: 600;">3D Generation Provider</span>
+                <button id="btn-refresh-provider-status" class="tool-btn btn-sm">Refresh Status</button>
               </div>
+              <div id="backend-status-badge" class="badge" style="margin-top:8px">Checking backend…</div>
+              <p id="provider-status-detail" style="font-size:11px;color:var(--text-secondary);margin-top:8px">Provider and model configuration are read from the backend.</p>
+              <p style="font-size:11px;color:var(--text-muted);margin-top:8px">Choose a provider in PowerShell: <code>.\\scripts\\configure_meshy.ps1</code> for Meshy or <code>.\\scripts\\configure_tencent.ps1</code> for Tencent, then run <code>.\\scripts\\start_local.ps1</code>. Keys stay in the ignored <code>.env</code> file. Meshy generation can consume account credits.</p>
             </div>
           </div>
         </div>
@@ -129,27 +132,40 @@ export function createSettingsView() {
       const btnClearCache = document.getElementById("btn-clear-cache");
       if (btnClearCache) {
         btnClearCache.addEventListener("click", () => {
-          localStorage.removeItem("s2s_user_assets");
+          store.clearGeneratedAssets();
           store.showToast("User asset cache cleared", "success", 2000);
         });
       }
 
-      // Check backend health
-      fetch("http://127.0.0.1:7860/", { method: "HEAD", mode: "no-cors" })
-        .then(() => {
-          const badge = document.getElementById("backend-status-badge");
+      const refreshProviderStatus = async () => {
+        const badge = document.getElementById("backend-status-badge");
+        const detail = document.getElementById("provider-status-detail");
+        const button = document.getElementById("btn-refresh-provider-status");
+        if (button) button.disabled = true;
+        try {
+          const response = await fetch("/health", { cache: "no-store" });
+          const health = await response.json();
+          if (!response.ok) throw new Error(health.detail || `Backend returned ${response.status}`);
+          const activeProvider = health.provider_setting || "tokenhub";
+          const configured = activeProvider === "meshy"
+            ? Boolean(health.meshy_configured)
+            : activeProvider === "tokenhub"
+              ? Boolean(health.tokenhub_configured)
+              : true;
           if (badge) {
-            badge.className = "badge badge-success";
-            badge.textContent = "● Connected (HTTP 200)";
+            badge.className = configured ? "badge badge-success" : "badge badge-amber";
+            badge.textContent = configured
+              ? `${health.generation_provider} configured · authentication checked on generation`
+              : `${health.generation_provider} API key missing`;
           }
-        })
-        .catch(() => {
-          const badge = document.getElementById("backend-status-badge");
-          if (badge) {
-            badge.className = "badge badge-cyan";
-            badge.textContent = "○ Standalone Mode";
-          }
-        });
+          if (detail) detail.textContent = `Backend: ${health.status} · Provider: ${health.generation_provider} · Model: ${health.model}. Credentials are never returned to the browser.`;
+        } catch (error) {
+          if (badge) { badge.className = "badge badge-amber"; badge.textContent = "Backend unreachable"; }
+          if (detail) detail.textContent = error.message || "Could not reach the Sketch2Shape backend.";
+        } finally { if (button) button.disabled = false; }
+      };
+      document.getElementById("btn-refresh-provider-status")?.addEventListener("click", refreshProviderStatus);
+      refreshProviderStatus();
     }
   };
 }

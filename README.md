@@ -1,5 +1,9 @@
 # Sketch2Shape AI
 
+## Tencent TokenHub Hi3D image generation
+
+To use Tencent TokenHub Hi3D, run .\scripts\configure_tencent.ps1 or set TENCENT_TOKENHUB_API_KEY in the backend environment, then restart the API. The ignored .env file is loaded automatically. The integration submits the uploaded or drawn image to the documented hi3d-3.0 image-to-3D API and polls its task result, requesting textured PBR GLB output. The published TokenHub Hi3D API does not document the dedicated Sketch generation parameter or a text prompt alongside the image, so this provider path uses the drawing as an image input and cannot explicitly enable Tencent Cloud Sketch mode. The legacy local Stable Diffusion/mesh reconstruction pipeline remains available by explicitly setting SKETCH2SHAPE_PROVIDER=local and installing its model weights.
+
 > **Diffusion-Guided 3D Spatial Asset Generation from 2D Hand-Drawn Sketches**  
 > **TechZephyr 4.0 Hackathon · IIT Bhubaneswar**  
 > **System Release:** `v1.0.0-final`

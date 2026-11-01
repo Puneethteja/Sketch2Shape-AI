@@ -90,7 +90,9 @@ def compute_sketch_fidelity(
     else:
         dice = 0.0
 
-    calibrated_iou = min(1.0, max(0.0, iou * 1.12 + 0.08 if union > 0 else 0.5))
+    # Report the measured intersection-over-union directly. Do not apply the
+    # former uplift, which made every generated mesh appear more similar.
+    calibrated_iou = min(1.0, max(0.0, iou)) if union > 0 else 0.0
     percentage = round(calibrated_iou * 100.0, 1)
 
     if percentage >= 82.0:

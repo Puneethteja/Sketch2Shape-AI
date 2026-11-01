@@ -194,10 +194,10 @@ _HTML5_CANVAS_HTML = """
             <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">Color</span>
             <input id="s2s-canvas-color" type="color" value="#0f172a" title="Pick ink color" style="width: 24px; height: 24px; padding: 0; border: 1px solid #475569; border-radius: 4px; background: transparent; cursor: pointer;">
             <div style="display: flex; gap: 3px;">
-                <span class="s2s-swatch" data-color="#000000" style="width:14px;height:14px;border-radius:2px;background:#000000;cursor:pointer;border:1px solid #475569;" title="Black"></span>
-                <span class="s2s-swatch" data-color="#334155" style="width:14px;height:14px;border-radius:2px;background:#334155;cursor:pointer;border:1px solid #475569;" title="Charcoal"></span>
-                <span class="s2s-swatch" data-color="#64748b" style="width:14px;height:14px;border-radius:2px;background:#64748b;cursor:pointer;border:1px solid #475569;" title="Graphite"></span>
-                <span class="s2s-swatch" data-color="#0284c7" style="width:14px;height:14px;border-radius:2px;background:#0284c7;cursor:pointer;border:1px solid #475569;" title="Cyan Blue"></span>
+                <button type="button" class="s2s-swatch" data-color="#000000" aria-label="Select black ink" style="width:18px;height:18px;padding:0;border-radius:3px;background:#000000;cursor:pointer;border:1px solid #94a3b8;" title="Black"></button>
+                <button type="button" class="s2s-swatch" data-color="#334155" aria-label="Select charcoal ink" style="width:18px;height:18px;padding:0;border-radius:3px;background:#334155;cursor:pointer;border:1px solid #94a3b8;" title="Charcoal"></button>
+                <button type="button" class="s2s-swatch" data-color="#64748b" aria-label="Select graphite ink" style="width:18px;height:18px;padding:0;border-radius:3px;background:#64748b;cursor:pointer;border:1px solid #94a3b8;" title="Graphite"></button>
+                <button type="button" class="s2s-swatch" data-color="#0284c7" aria-label="Select cyan blue ink" style="width:18px;height:18px;padding:0;border-radius:3px;background:#0284c7;cursor:pointer;border:1px solid #94a3b8;" title="Cyan Blue"></button>
             </div>
         </div>
 
@@ -235,8 +235,9 @@ _HTML5_CANVAS_HTML = """
         </button>
     </div>
 
-    <div style="position: relative; width: 100%; aspect-ratio: 1 / 1; background: #ffffff; border-radius: 4px; overflow: hidden; border: 1px solid #334155; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); cursor: crosshair; touch-action: none;">
+    <div style="position: relative; width: 100%; aspect-ratio: 1 / 1; background: #ffffff; border-radius: 4px; overflow: hidden; border: 1px solid #334155; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); cursor: none; touch-action: none;">
         <canvas id="s2s-html5-canvas" width="512" height="512" style="width: 100%; height: 100%; display: block;"></canvas>
+        <div id="s2s-brush-cursor" aria-hidden="true" style="position: absolute; display: none; z-index: 4; pointer-events: none; width: 8px; height: 8px; border: 1px solid #ffffff; outline: 1px solid #080b10; outline-offset: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.65); border-radius: 50%; transform: translate(-50%, -50%);"></div>
         <div id="s2s-canvas-watermark" style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; pointer-events: none; color: #94a3b8; transition: opacity 0.25s ease; user-select: none;">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.5">
                 <path d="M12 19l7-7 3 3-7 7-3-3z"/>
@@ -267,14 +268,26 @@ _HTML5_CANVAS_HTML = """
     function initCanvas() {
         var canvas = document.getElementById("s2s-html5-canvas");
         if (!canvas) return;
+        if (canvas.__s2sInitialized) return;
         var ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) return;
+        canvas.__s2sInitialized = true;
+        window.__s2sCanvasInstance = canvas;
+
+        if (!document.getElementById("s2s-canvas-interaction-styles")) {
+            var interactionStyles = document.createElement("style");
+            interactionStyles.id = "s2s-canvas-interaction-styles";
+            interactionStyles.textContent = "#s2s-canvas-component button{transition:filter .12s ease,transform .12s ease,box-shadow .12s ease}#s2s-canvas-component button:hover:not(:disabled){filter:brightness(1.15)}#s2s-canvas-component button:active:not(:disabled){transform:translateY(1px)}#s2s-canvas-component button:focus-visible,#s2s-canvas-component input:focus-visible{outline:2px solid #38bdf8;outline-offset:2px}#s2s-canvas-component button:disabled{opacity:.55;cursor:not-allowed!important}";
+            document.head.appendChild(interactionStyles);
+        }
 
         var watermark = document.getElementById("s2s-canvas-watermark");
+        var cursor = document.getElementById("s2s-brush-cursor");
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         var isDrawing = false;
+        var activePointerId;
         var mode = "brush";
         var brushColor = "#0f172a";
         var brushSize = 4;
@@ -332,17 +345,45 @@ _HTML5_CANVAS_HTML = """
 
         function getPos(e) {
             var rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return { x: 0, y: 0 };
             var scaleX = canvas.width / rect.width;
             var scaleY = canvas.height / rect.height;
             return {
-                x: (e.clientX - rect.x) * scaleX,
-                y: (e.clientY - rect.y) * scaleY
+                x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.x) * scaleX)),
+                y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.y) * scaleY))
             };
         }
 
+        function updateBrushCursor(e) {
+            if (!cursor || !canvas.parentElement) return;
+            if (e.pointerType === "touch") {
+                cursor.style.display = "none";
+                return;
+            }
+            var canvasRect = canvas.getBoundingClientRect();
+            var wrapRect = canvas.parentElement.getBoundingClientRect();
+            var scale = canvasRect.width / canvas.width;
+            var diameter = Math.max(8, brushSize * scale);
+            cursor.style.width = diameter + "px";
+            cursor.style.height = diameter + "px";
+            cursor.style.left = (e.clientX - wrapRect.left) + "px";
+            cursor.style.top = (e.clientY - wrapRect.top) + "px";
+            cursor.style.display = "block";
+        }
+
+        canvas.addEventListener("pointerenter", updateBrushCursor);
+        canvas.addEventListener("pointermove", updateBrushCursor);
+        canvas.addEventListener("pointerleave", function() {
+            if (cursor && !isDrawing) cursor.style.display = "none";
+        });
+
         canvas.addEventListener("pointerdown", function(e) {
+            if (e.button !== undefined && e.button !== 0) return;
             e.preventDefault();
+            e.stopPropagation();
+            updateBrushCursor(e);
             isDrawing = true;
+            activePointerId = e.pointerId;
             canvas.setPointerCapture(e.pointerId);
             if (watermark) watermark.style.opacity = "0";
             saveState();
@@ -362,8 +403,10 @@ _HTML5_CANVAS_HTML = """
         });
 
         canvas.addEventListener("pointermove", function(e) {
+            updateBrushCursor(e);
             if (!isDrawing) return;
             e.preventDefault();
+            e.stopPropagation();
             var pt = getPos(e);
 
             ctx.beginPath();
@@ -383,7 +426,10 @@ _HTML5_CANVAS_HTML = """
 
         function endStroke(e) {
             if (!isDrawing) return;
+            if (activePointerId !== undefined && e.pointerId !== activePointerId) return;
+            e.stopPropagation();
             isDrawing = false;
+            activePointerId = undefined;
             try { canvas.releasePointerCapture(e.pointerId); } catch(err) {}
             syncToGradio();
             try {
@@ -393,6 +439,7 @@ _HTML5_CANVAS_HTML = """
 
         canvas.addEventListener("pointerup", endStroke);
         canvas.addEventListener("pointercancel", endStroke);
+        canvas.addEventListener("lostpointercapture", endStroke);
 
         if (toolBrush) {
             toolBrush.addEventListener("click", function() {
@@ -435,6 +482,12 @@ _HTML5_CANVAS_HTML = """
             brushSlider.addEventListener("input", function(e) {
                 brushSize = parseInt(e.target.value, 10);
                 if (brushBadge) brushBadge.textContent = brushSize + "px";
+                if (cursor) {
+                    var scale = canvas.getBoundingClientRect().width / canvas.width;
+                    var diameter = Math.max(8, brushSize * scale);
+                    cursor.style.width = diameter + "px";
+                    cursor.style.height = diameter + "px";
+                }
             });
         }
 
@@ -523,6 +576,8 @@ _HTML5_CANVAS_HTML = """
         };
 
         document.querySelectorAll(".s2s-preset-btn").forEach(function(btn) {
+            if (btn.__s2sBound) return;
+            btn.__s2sBound = true;
             btn.addEventListener("click", function() {
                 var pId = btn.getAttribute("data-preset");
                 window.s2sLoadPreset(pId);
@@ -563,10 +618,24 @@ _HTML5_CANVAS_HTML = """
         setTimeout(syncToGradio, 200);
     }
 
+    function watchCanvasReplacement() {
+        if (!document.body || window.__s2sCanvasObserver) return;
+        window.__s2sCanvasObserver = new MutationObserver(function() {
+            var canvas = document.getElementById("s2s-html5-canvas");
+            if (canvas && canvas !== window.__s2sCanvasInstance) initCanvas();
+        });
+        window.__s2sCanvasObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function initializeCanvasAndWatch() {
+        initCanvas();
+        watchCanvasReplacement();
+    }
+
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", initCanvas);
+        document.addEventListener("DOMContentLoaded", initializeCanvasAndWatch, { once: true });
     } else {
-        setTimeout(initCanvas, 50);
+        setTimeout(initializeCanvasAndWatch, 50);
     }
 })();
 </script>

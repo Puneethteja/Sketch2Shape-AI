@@ -136,10 +136,10 @@ class SketchDiffusionGenerator:
         except Exception as exc:
             logger.warning(
                 f"Diffusers pipeline initialization unavailable ({exc}). "
-                "Operating in high-fidelity synthetic mock generator mode."
+                "AI generation is unavailable; refusing to return a synthetic stand-in."
             )
             self.pipeline = None
-            self._is_mock = True
+            self._is_mock = False
 
     def build_conditioned_prompt(self, user_prompt: Optional[str]) -> Tuple[str, str]:
         clean_user_prompt = (user_prompt or "").strip()
@@ -232,7 +232,7 @@ class SketchDiffusionGenerator:
             )
             out_img = result.images[0]
         else:
-            out_img = self._generate_synthetic_conditioned_image(control_img, pos_prompt, seed_used)
+            raise RuntimeError("Diffusers/ControlNet weights are unavailable. Configure Tencent TokenHub HY-3D or install the local model weights; no placeholder result was generated.")
 
         elapsed = round(time.perf_counter() - t0, 3)
         logger.info(f"Generation completed in {elapsed:.2f}s | Output size: {out_img.size}")
